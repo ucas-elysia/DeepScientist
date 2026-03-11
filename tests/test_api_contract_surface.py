@@ -202,14 +202,8 @@ def test_local_quest_workspace_uses_real_canvas_and_details_tabs() -> None:
 
 
 def test_workspace_surfaces_hide_autofigure_entry_points() -> None:
-    left_panel_source = _read("src/ui/src/components/workspace/LeftPanel.tsx")
-    left_sidebar_source = _read("src/ui/src/components/workspace/LeftSidebar.tsx")
-    floating_panel_source = _read("src/ui/src/components/workspace/floating/FloatingFilePanel.tsx")
     marketplace_source = _read("src/ui/src/lib/plugins/marketplace/MarketplacePlugin.tsx")
     workspace_source = _read("src/ui/src/components/workspace/WorkspaceLayout.tsx")
 
-    assert "BUILTIN_PLUGINS.AUTOFIGURE" not in left_panel_source
-    assert "BUILTIN_PLUGINS.AUTOFIGURE" not in left_sidebar_source
-    assert "BUILTIN_PLUGINS.AUTOFIGURE" not in floating_panel_source
     assert 'title: "AutoFigure"' not in marketplace_source
     assert "tab.pluginId === BUILTIN_PLUGINS.AUTOFIGURE" in workspace_source

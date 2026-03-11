@@ -731,6 +731,18 @@ export async function getQuestSession(
   })
 }
 
+export async function getQuestSessionEventsOnly(
+  sessionId: string,
+  options?: { full?: boolean; limit?: number }
+): Promise<AgentSSEEvent[]> {
+  const questId = getQuestIdFromSessionId(sessionId)
+  if (!questId) {
+    throw new Error(`Invalid quest session id: ${sessionId}`)
+  }
+  const history = await fetchQuestNormalizedEvents(questId, options)
+  return history.events
+}
+
 export async function getQuestLatestSession(
   projectId: string,
   limit?: number

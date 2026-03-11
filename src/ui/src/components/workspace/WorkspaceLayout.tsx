@@ -2536,7 +2536,7 @@ function LeftPanel({
                   <SidebarButton
                     icon={<Settings className="h-4 w-4" />}
                     label={t('leftpanel_settings')}
-                    onClick={() => openPluginTab(BUILTIN_PLUGINS.SETTINGS, t('plugin_settings_title'))}
+                    onClick={openSettings}
                   />
                   <SidebarButton
                     icon={
@@ -3607,12 +3607,8 @@ export function WorkspaceLayout({
   const openProjectSettings = React.useCallback(() => {
     if (readOnlyMode) return
     exitHome()
-    openTab({
-      pluginId: BUILTIN_PLUGINS.SETTINGS,
-      context: { type: 'custom', customData: { projectId } },
-      title: t('plugin_settings_title'),
-    })
-  }, [exitHome, openTab, projectId, readOnlyMode, t])
+    router.push('/settings')
+  }, [exitHome, readOnlyMode, router])
 
   const openSettings = React.useCallback(() => {
     router.push('/settings')

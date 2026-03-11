@@ -65,6 +65,7 @@ import {
 } from '@/lib/api/sessions'
 import {
   buildQuestSessionId,
+  getQuestSessionEventsOnly,
   isQuestSessionId,
   resolveQuestResumeToken,
   shouldUseQuestSessionCompat,
@@ -2013,6 +2014,22 @@ export function AiManusChatView({
     surfaceSessionId,
     welcomeSessionId,
   ])
+
+  useEffect(() => {
+    if (!projectId) return
+    if (draftSessionId) return
+    if (surfaceSessionId) return
+    let cancelled = false
+    const adoptQuestSession = async () => {
+      if (!(await shouldUseQuestSessionCompat(projectId))) return
+      if (cancelled) return
+      setSessionIdForSurface(projectId, sessionSurface, buildQuestSessionId(projectId))
+    }
+    void adoptQuestSession()
+    return () => {
+      cancelled = true
+    }
+  }, [draftSessionId, projectId, sessionSurface, setSessionIdForSurface, surfaceSessionId])
 
   useEffect(() => {
     if (!projectId) return
@@ -7921,6 +7938,68 @@ export function AiManusChatView({
         wantsFullHistory = fullHistoryModeRef.current || fullHistoryRequest
         if (fullHistoryRequest) {
           fullHistoryRequestRef.current = false
+        }
+        if (isQuestSessionId(sessionId) && !hasCachedEvents) {
+          const questEvents = await getQuestSessionEventsOnly(
+            sessionId,
+            wantsFullHistory ? { full: true } : undefined
+          )
+          if (!active) return
+          const orderedEvents = sortHydratedEvents(questEvents)
+          virtualizeRestoreRef.current = orderedEvents.length >= virtualizeThreshold
+          setHistoryTruncated(false)
+          setHistoryLimit(wantsFullHistory ? null : orderedEvents.length || null)
+          const renamed = getRenamedTitle(sessionId)
+          resetConversation({ title: renamed || seededTitle })
+          setRealTime(false)
+          realTimeRef.current = false
+          restoringRef.current = true
+          restoredStatusRef.current = normalizeSessionStatus(sessionMeta?.status ?? null)
+          try {
+            replaceCachedSessionEvents(sessionId, orderedEvents)
+            if (orderedEvents.length === 0) {
+              setLastEventId(sessionId, null)
+            } else {
+              const questResumeToken = resolveQuestResumeToken(orderedEvents)
+              if (questResumeToken) {
+                setLastEventId(sessionId, questResumeToken)
+              }
+            }
+            const handler = handleEventRef.current ?? handleEvent
+            if (handler) {
+              cacheReplayRef.current = true
+              try {
+                for (const event of orderedEvents) {
+                  handler(event)
+                }
+              } finally {
+                cacheReplayRef.current = false
+              }
+            }
+          } finally {
+            restoringRef.current = false
+            restoredStatusRef.current = null
+            flushPendingMessages()
+            flushRestoreStreamQueue()
+            setRealTime(true)
+            realTimeRef.current = true
+          }
+          const normalizedQuestStatus = normalizeSessionStatus(sessionMeta?.status ?? null)
+          const shouldResumeQuest =
+            Boolean(sessionMeta?.is_active) || isSessionStatusActive(normalizedQuestStatus)
+          if (shouldResumeQuest) {
+            void sendMessage({
+              sessionId,
+              message: '',
+              surface: sessionSurface,
+              executionTarget: executionTargetRef.current,
+              cliServerId: cliServerIdRef.current,
+              replayFromLastEvent: true,
+            }).catch((error) => {
+              console.warn('[AiManus] Failed to resume quest stream', error)
+            })
+          }
+          return
         }
         const session = await getSession(sessionId, wantsFullHistory ? { full: true } : undefined)
         if (!active || !session) {

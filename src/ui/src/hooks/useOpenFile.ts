@@ -10,6 +10,7 @@
  */
 
 import { useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useTabsStore } from "@/lib/stores/tabs";
 import { useFileTreeStore } from "@/lib/stores/file-tree";
 import type { FileNode } from "@/lib/types/file";
@@ -57,6 +58,7 @@ export interface OpenFileResult {
  * Falls back to download if no plugin can handle the file type.
  */
 export function useOpenFile() {
+  const navigate = useNavigate();
   const openTab = useTabsStore((state) => state.openTab);
   const findTabByContext = useTabsStore((state) => state.findTabByContext);
   const setActiveTab = useTabsStore((state) => state.setActiveTab);
@@ -318,18 +320,13 @@ export function useOpenFile() {
   /**
    * Open settings
    */
-  const openSettings = useCallback((): string => {
-    const context: TabContext = {
-      type: "custom",
-      customData: { section: "general" },
-    };
-
-    return openTab({
-      pluginId: BUILTIN_PLUGINS.SETTINGS,
-      context,
-      title: "Settings",
-    });
-  }, [openTab]);
+  const openSettings = useCallback(
+    (section?: string): string => {
+      navigate(section ? `/settings/${section}` : "/settings");
+      return section ? `route:/settings/${section}` : "route:/settings";
+    },
+    [navigate]
+  );
 
   /**
    * Open search

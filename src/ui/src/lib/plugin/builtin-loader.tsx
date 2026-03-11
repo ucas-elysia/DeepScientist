@@ -135,11 +135,6 @@ const BUILTIN_PLUGIN_IMPORTS: Record<string, ComponentImportFn> = {
   // Placeholder Plugins - to be implemented
   // ============================================================
 
-  "@ds/plugin-settings": () =>
-    import("@/lib/plugins/settings/SettingsPlugin").then((m) => ({
-      default: m.default,
-    })),
-
   "@ds/plugin-search": () =>
     import("@/lib/plugins/search/SearchPlugin").then((m) => ({
       default: m.default,

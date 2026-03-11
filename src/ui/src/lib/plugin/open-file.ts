@@ -344,56 +344,28 @@ export function openNotebook(
 }
 
 /**
- * Open settings panel
+ * Open settings page
  *
- * Convenience function for opening the settings plugin.
+ * Convenience function for navigating to the dedicated settings route.
  *
- * @param section - Optional settings section to open
+ * @param section - Optional settings document to open
  * @returns Result indicating success or failure
- *
- * @example
- * ```typescript
- * // Open settings to a specific section
- * openSettings('appearance');
- * ```
  */
 export function openSettings(section?: string): OpenFileResult {
-  const pluginId = "@ds/plugin-settings";
-
-  // Verify plugin is registered
-  if (!pluginRegistry.hasPlugin(pluginId)) {
+  if (typeof window === "undefined") {
     return {
       success: false,
-      error: `Settings plugin not registered: ${pluginId}`,
+      error: "Settings route is only available in the browser",
     };
   }
 
-  // Build tab context for settings
-  const context: TabContext = {
-    type: "custom",
-    resourceId: "settings",
-    resourceName: "Settings",
-    customData: {
-      section,
-    },
-  };
-
-  // Build open tab options
-  const tabOptions: OpenTabOptions = {
-    pluginId,
-    context,
-    title: "Settings",
-    icon: "settings",
-  };
-
-  // Open the tab
-  const tabsStore = useTabsStore.getState();
-  const tabId = tabsStore.openTab(tabOptions);
+  const target = section ? `/settings/${section}` : "/settings";
+  window.location.assign(target);
 
   return {
     success: true,
-    tabId,
-    pluginId,
+    tabId: target,
+    pluginId: "route:/settings",
   };
 }
 

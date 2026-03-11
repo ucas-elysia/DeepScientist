@@ -362,37 +362,6 @@ const markdownViewerManifest: UnifiedPluginManifest = {
 };
 
 /**
- * Settings Plugin Manifest
- */
-const settingsManifest: UnifiedPluginManifest = {
-  id: "@ds/plugin-settings",
-  name: "Settings",
-  version: "1.0.0",
-  description: "Application settings and preferences",
-  type: "builtin",
-  frontend: {
-    entry: "components/plugins/settings",
-    renderMode: "react",
-  },
-  contributes: {
-    sidebarMenus: [
-      {
-        id: "settings",
-        title: "Settings",
-        icon: "settings",
-        order: 100,
-      },
-    ],
-  },
-  permissions: {
-    frontend: ["storage", "user:read"],
-  },
-  lifecycle: {
-    activationEvents: ["onCommand:openSettings"],
-  },
-};
-
-/**
  * Search Plugin Manifest
  */
 const searchManifest: UnifiedPluginManifest = {
@@ -500,7 +469,6 @@ export const BUILTIN_PLUGIN_MANIFESTS: UnifiedPluginManifest[] = [
   textViewerManifest,
   markdownViewerManifest,
   docViewerManifest,
-  settingsManifest,
   searchManifest,
 ];
 

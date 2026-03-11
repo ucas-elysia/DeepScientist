@@ -15,6 +15,7 @@ import {
   Sparkles,
   Terminal,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import type { PluginComponentProps } from "@/lib/types/plugin";
 import type { TabContext, TabContextType } from "@/lib/types/tab";
 import { useTabsStore } from "@/lib/stores/tabs";
@@ -270,6 +271,7 @@ const pluginSections: PluginSection[] = [
 export default function MarketplacePlugin({ context, setTitle }: PluginComponentProps) {
   React.useEffect(() => setTitle("Plugin Marketplace"), [setTitle]);
 
+  const navigate = useNavigate();
   const openTab = useTabsStore((s) => s.openTab);
   const { openFileInTab } = useOpenFile();
   const storeProjectId = useFileTreeStore((s) => s.projectId);
@@ -291,6 +293,11 @@ export default function MarketplacePlugin({ context, setTitle }: PluginComponent
     async (card: PluginCard) => {
       if (card.openMode === "disabled") return;
       if (card.requiresProject && !projectId) return;
+
+      if (card.id === BUILTIN_PLUGINS.SETTINGS) {
+        navigate("/settings");
+        return;
+      }
 
       if (card.id === BUILTIN_PLUGINS.NOTEBOOK) {
         try {
@@ -361,6 +368,7 @@ export default function MarketplacePlugin({ context, setTitle }: PluginComponent
       openTab,
       projectId,
       upload,
+      navigate,
     ]
   );
 
