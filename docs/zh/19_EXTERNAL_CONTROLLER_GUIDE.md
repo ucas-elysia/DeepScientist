@@ -1,4 +1,4 @@
-# 16 External Controller 指南
+# 19 External Controller 指南
 
 DeepScientist 已经暴露出足够多的持久状态，因此你可以在不改 core runtime 的前提下，构建一层外部编排控制器。
 
@@ -91,6 +91,97 @@ Return to the main line and do one bounded route next:
 2. reference expansion
 3. manuscript body revision
 ```
+
+## 可以直接照着改的 controller 例子
+
+### 例 1：publishability admission guard
+
+这类 controller 适合处理一种常见情况：quest 还没有把证据线做扎实，却已经开始往 paper-facing 写作漂移。
+
+常见输入：
+
+- 最新 verification 结论
+- 当前 draft / summary 状态
+- 最近 baseline、utility 或主实验结果
+
+常见触发条件：
+
+- 当前论文主张的支撑仍然偏弱
+- 还有一项或多项必要证据没有补齐
+
+常见干预动作：
+
+1. 写出 `reports/publishability_guard.md`，明确缺什么支撑。
+2. 通过 `quest_control` 停止当前偏写作的 run。
+3. 往 mailbox 注入一条 routed message，把下一轮明确导回 `idea`、`analysis` 或某个有边界的证据修复步骤。
+
+示例消息正文：
+
+```text
+External controller: do not continue manuscript-facing writing yet.
+Reason: the current evidence line does not pass the publishability admission gate.
+Next route: return to one bounded evidence-building step before write resumes.
+```
+
+### 例 2：figure-loop guard
+
+这类 controller 适合处理另一种常见情况：同一张图不断 reopen / polish，但对主结论已经没有实质推进。
+
+常见输入：
+
+- 最近的 figure artifact 历史
+- 重复 reopen 的事件记录
+- 最新 review 或 summary 结论
+
+常见触发条件：
+
+- 同一张图已经反复 reopen 多次，但主张没有被强化
+- 下一步更有价值的动作已经不是继续 polish，而是修证据或改正文
+
+常见干预动作：
+
+1. 写出 `reports/figure_loop_guard.md`，概括当前循环为何低收益。
+2. 必要时停止当前 figure 分支。
+3. 往 mailbox 注入一条只给出一个下一步路由的消息。
+
+示例消息正文：
+
+```text
+External controller: stop the current figure-polish loop.
+Reason: repeated reopen cycles are no longer improving the main evidence line.
+Next route: return to one bounded manuscript or analysis task.
+```
+
+## connector 定制时，通常改什么
+
+controller 本身的控制逻辑最好保持 connector-agnostic。实际适配到不同 connector 时，通常只需要改消息呈现 profile，而不需要改 stop 逻辑或 durable report 契约。
+
+例如：
+
+```yaml
+connector_profiles:
+  weixin:
+    summary_style: concise
+    max_route_options: 2
+    include_report_path: true
+  telegram:
+    summary_style: concise
+    max_route_options: 3
+    include_report_path: true
+  studio:
+    summary_style: detailed
+    max_route_options: 4
+    include_report_excerpt: true
+```
+
+controller 的核心决策始终不变：
+
+- 读取 durable state
+- 判断是否应该 stop
+- 写一份 durable report
+- 注入一条 routed mailbox message
+
+真正跟 connector 相关的，通常只是给人看的信息颗粒度和呈现方式。
 
 ## durable report 建议结构
 

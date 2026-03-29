@@ -1,4 +1,4 @@
-# 16 External Controller Guide
+# 19 External Controller Guide
 
 DeepScientist already exposes enough durable state to support an outer orchestration layer without patching core runtime code.
 
@@ -91,6 +91,97 @@ Return to the main line and do one bounded route next:
 2. reference expansion
 3. manuscript body revision
 ```
+
+## Example controllers you can adapt
+
+### Example 1: publishability admission guard
+
+This controller is useful when a quest is drifting into paper-facing writing before the evidence line is ready.
+
+Typical inputs:
+
+- the latest verification note
+- the current draft / summary state
+- recent baseline or utility results
+
+Typical stop condition:
+
+- the claimed paper direction still has weak support
+- one or more mandatory evidence items are still missing
+
+Typical intervention:
+
+1. Write `reports/publishability_guard.md` explaining the missing support.
+2. Stop the current write-heavy run through `quest_control`.
+3. Enqueue one mailbox message that routes the next turn back to `idea`, `analysis`, or a bounded evidence-repair step.
+
+Example mailbox text:
+
+```text
+External controller: do not continue manuscript-facing writing yet.
+Reason: the current evidence line does not pass the publishability admission gate.
+Next route: return to one bounded evidence-building step before write resumes.
+```
+
+### Example 2: figure-loop guard
+
+This controller is useful when the frontier is monopolized by repeated reopen / polish cycles on the same figure.
+
+Typical inputs:
+
+- recent figure artifact history
+- repeated reopen events
+- the latest review or summary note
+
+Typical stop condition:
+
+- the same figure has been reopened multiple times without improving the main claim
+- the next useful action is no longer figure polish, but evidence repair or manuscript revision
+
+Typical intervention:
+
+1. Write `reports/figure_loop_guard.md` summarizing the loop.
+2. Stop the current figure branch if needed.
+3. Enqueue one mailbox message that names exactly one next route.
+
+Example mailbox text:
+
+```text
+External controller: stop the current figure-polish loop.
+Reason: repeated reopen cycles are no longer improving the main evidence line.
+Next route: return to one bounded manuscript or analysis task.
+```
+
+## Example connector customization surface
+
+The control logic should stay connector-agnostic. In practice, adapting the same controller to a different connector usually means changing only the message profile, not the stop logic or durable report contract.
+
+For example:
+
+```yaml
+connector_profiles:
+  weixin:
+    summary_style: concise
+    max_route_options: 2
+    include_report_path: true
+  telegram:
+    summary_style: concise
+    max_route_options: 3
+    include_report_path: true
+  studio:
+    summary_style: detailed
+    max_route_options: 4
+    include_report_excerpt: true
+```
+
+The controller decision stays the same:
+
+- read durable state
+- decide whether to stop
+- write a durable report
+- enqueue one routed mailbox message
+
+What changes per connector is only how much detail you surface to the human operator.
 
 ## Durable report shape
 
