@@ -28,6 +28,9 @@ def test_system_prompt_defines_metric_contract_rules_and_optional_metric_md() ->
     assert "Every canonical baseline metric entry should explain where it came from" in text
     assert "Every main experiment submission must cover all required baseline metric ids" in text
     assert "`Result/metric.md` may be used as temporary scratch memory" in text
+    assert "When using `artifact.confirm_baseline(...)`, keep two levels explicit" in text
+    assert "If you compute an aggregate metric such as a mean, keep the aggregate as one metric" in text
+    assert "Do not manually turn the actual message into a preview" in text
 
 
 def test_idea_skill_requires_survey_delta_and_memory_reuse_contract() -> None:
@@ -202,6 +205,7 @@ def test_baseline_skill_requires_plan_checklist_and_source_reading() -> None:
     assert "original paper's evaluation protocol as the canonical baseline contract" in text
     assert "multiple metrics, datasets, subtasks, or splits" in text
     assert "flat top-level dictionary keyed by the paper-facing metric ids" in text
+    assert "reuse that richer contract instead of hand-writing a thinner one" in text
     assert "`Result/metric.md` is optional temporary scratch memory only" in text
     assert "same failure class" in text
     assert "## Baseline id and variant rules" in text

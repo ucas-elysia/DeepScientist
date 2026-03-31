@@ -20,7 +20,7 @@ try:
 except ImportError:  # pragma: no cover - exercised on Windows
     fcntl = None
 
-from ..artifact.metrics import build_metrics_timeline, extract_latest_metric
+from ..artifact.metrics import build_baseline_compare_payload, build_metrics_timeline, extract_latest_metric
 from ..config import ConfigManager
 from ..connector_runtime import conversation_identity_key, normalize_conversation_id, parse_conversation_id
 from ..file_lock import advisory_file_lock
@@ -476,6 +476,14 @@ class QuestService:
         return quest_root / ".ds" / "cache" / "metrics_timeline.lock"
 
     @staticmethod
+    def _baseline_compare_cache_path(quest_root: Path) -> Path:
+        return quest_root / ".ds" / "cache" / "baseline_compare.v1.json"
+
+    @staticmethod
+    def _baseline_compare_cache_lock_path(quest_root: Path) -> Path:
+        return quest_root / ".ds" / "cache" / "baseline_compare.lock"
+
+    @staticmethod
     def _json_compatible_state(value: Any) -> Any:
         if isinstance(value, tuple):
             return [QuestService._json_compatible_state(item) for item in value]
@@ -540,6 +548,32 @@ class QuestService:
             self._artifact_index_collection_state(quest_root),
             self._metrics_timeline_attachment_state(quest_root, workspace_root),
         ]
+
+    def _baseline_compare_state(self, quest_root: Path, workspace_root: Path) -> list[Any]:
+        return [
+            str(workspace_root.resolve()),
+            self._artifact_index_collection_state(quest_root),
+            self._metrics_timeline_attachment_state(quest_root, workspace_root),
+            self._json_compatible_state(self._path_state(self._quest_yaml_path(quest_root))),
+        ]
+
+    def _baseline_compare_entries(self, quest_root: Path, workspace_root: Path) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        for item in self._collect_artifacts_raw(quest_root):
+            if str(item.get("kind") or "").strip() != "baselines":
+                continue
+            payload = item.get("payload") or {}
+            if not isinstance(payload, dict):
+                continue
+            status = str(payload.get("status") or "").strip().lower()
+            if status not in {"confirmed", "published", "quest_confirmed"}:
+                continue
+            entries.append(dict(payload))
+        attachment = self._active_baseline_attachment(quest_root, workspace_root)
+        attachment_entry = dict(attachment.get("entry") or {}) if isinstance(attachment, dict) else None
+        if attachment_entry:
+            entries.append(attachment_entry)
+        return entries
 
     def _artifact_projection_state(self, quest_root: Path) -> tuple[str, Any]:
         index_state = self._artifact_index_collection_state(quest_root)
@@ -3978,6 +4012,64 @@ class QuestService:
             )
             return payload
 
+    def baseline_compare(self, quest_id: str) -> dict:
+        quest_root = self._quest_root(quest_id)
+        workspace_root = self.active_workspace_root(quest_root)
+        state = self._json_compatible_state(self._baseline_compare_state(quest_root, workspace_root))
+        cache_path = self._baseline_compare_cache_path(quest_root)
+        cache_schema_version = 1
+        cached = self._read_cached_json(cache_path, {})
+        if (
+            isinstance(cached, dict)
+            and int(cached.get("schema_version") or 0) == cache_schema_version
+            and self._json_compatible_state(cached.get("state")) == state
+            and isinstance(cached.get("payload"), dict)
+        ):
+            return dict(cached.get("payload") or {})
+
+        with advisory_file_lock(self._baseline_compare_cache_lock_path(quest_root)):
+            cached = read_json(cache_path, {})
+            if (
+                isinstance(cached, dict)
+                and int(cached.get("schema_version") or 0) == cache_schema_version
+                and self._json_compatible_state(cached.get("state")) == state
+                and isinstance(cached.get("payload"), dict)
+            ):
+                return dict(cached.get("payload") or {})
+
+            quest_data = self.read_quest_yaml(quest_root)
+            confirmed_ref = (
+                dict(quest_data.get("confirmed_baseline_ref") or {})
+                if isinstance(quest_data.get("confirmed_baseline_ref"), dict)
+                else {}
+            )
+            attachment = self._active_baseline_attachment(quest_root, workspace_root)
+            active_baseline_id = (
+                str(confirmed_ref.get("baseline_id") or "").strip()
+                or (str(attachment.get("source_baseline_id") or "").strip() if isinstance(attachment, dict) else "")
+                or None
+            )
+            active_variant_id = (
+                str(confirmed_ref.get("variant_id") or "").strip()
+                or (str(attachment.get("source_variant_id") or "").strip() if isinstance(attachment, dict) else "")
+                or None
+            )
+            payload = build_baseline_compare_payload(
+                quest_id=quest_id,
+                baseline_entries=self._baseline_compare_entries(quest_root, workspace_root),
+                active_baseline_id=active_baseline_id,
+                active_variant_id=active_variant_id,
+            )
+            write_json(
+                cache_path,
+                {
+                    "schema_version": cache_schema_version,
+                    "state": state,
+                    "payload": payload,
+                },
+            )
+            return payload
+
     def list_documents(self, quest_id: str) -> list[dict]:
         quest_root = self._quest_root(quest_id)
         workspace_root = self.active_workspace_root(quest_root)
@@ -5032,6 +5124,7 @@ class QuestService:
         artifact_id: str | None,
         kind: str,
         message: str,
+        summary_preview: str | None = None,
         dedupe_key: str | None = None,
         response_phase: str | None = None,
         reply_mode: str | None = None,
@@ -5049,6 +5142,7 @@ class QuestService:
             "artifact_id": artifact_id,
             "kind": kind,
             "message": message,
+            "summary_preview": str(summary_preview or "").strip() or None,
             "dedupe_key": str(dedupe_key or "").strip() or None,
             "response_phase": response_phase,
             "reply_mode": reply_mode,

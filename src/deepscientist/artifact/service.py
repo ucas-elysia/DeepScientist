@@ -234,8 +234,15 @@ class ArtifactService:
         return fallback or "current head"
 
     @staticmethod
-    def _short_text(value: object, *, limit: int = 120) -> str | None:
+    def _clean_text(value: object) -> str | None:
         text = " ".join(str(value or "").split()).strip()
+        if not text:
+            return None
+        return text
+
+    @staticmethod
+    def _summary_preview_text(value: object, *, limit: int = 220) -> str | None:
+        text = ArtifactService._clean_text(value)
         if not text:
             return None
         if len(text) <= limit:
@@ -258,16 +265,13 @@ class ArtifactService:
         expected_gain: str | None,
         next_target: str | None,
     ) -> str:
-        normalized_title = self._short_text(title or idea_id, limit=80) or idea_id
-        design_text = self._short_text(method_brief or mechanism, limit=140) or self.quest_service.localized_copy(
+        normalized_title = self._clean_text(title or idea_id) or idea_id
+        design_text = self._clean_text(method_brief or mechanism) or self.quest_service.localized_copy(
             quest_root=quest_root,
             zh="核心设计还未写清楚",
             en="the core design is not written clearly yet",
         )
-        compared_target = self._short_text(
-            foundation_label,
-            limit=48,
-        ) or self.quest_service.localized_copy(
+        compared_target = self._clean_text(foundation_label) or self.quest_service.localized_copy(
             quest_root=quest_root,
             zh="当前方案",
             en="the current approach",
@@ -277,16 +281,16 @@ class ArtifactService:
             delta_parts.append(
                 self.quest_service.localized_copy(
                     quest_root=quest_root,
-                    zh=f"重点改 `{self._short_text(change_layer, limit=36) or change_layer}`",
-                    en=f"changes `{self._short_text(change_layer, limit=36) or change_layer}` first",
+                    zh=f"重点改 `{self._clean_text(change_layer) or change_layer}`",
+                    en=f"changes `{self._clean_text(change_layer) or change_layer}` first",
                 )
             )
         if source_lens:
             delta_parts.append(
                 self.quest_service.localized_copy(
                     quest_root=quest_root,
-                    zh=f"引入 `{self._short_text(source_lens, limit=36) or source_lens}` 的设计视角",
-                    en=f"adds a `{self._short_text(source_lens, limit=36) or source_lens}` design angle",
+                    zh=f"引入 `{self._clean_text(source_lens) or source_lens}` 的设计视角",
+                    en=f"adds a `{self._clean_text(source_lens) or source_lens}` design angle",
                 )
             )
         if not delta_parts:
@@ -297,8 +301,8 @@ class ArtifactService:
                     en=f"directly adds `{design_text}` into the main design",
                 )
             )
-        delta_text = self._short_text("；".join(delta_parts), limit=160) or delta_parts[0]
-        expected_text = self._short_text(expected_gain, limit=96)
+        delta_text = self._clean_text("；".join(delta_parts)) or delta_parts[0]
+        expected_text = self._clean_text(expected_gain)
         next_target_text = self._format_route_label(next_target) if next_target else None
         if action == "candidate":
             headline = self.quest_service.localized_copy(
@@ -10258,6 +10262,7 @@ class ArtifactService:
         *,
         kind: str = "progress",
         message: str = "",
+        summary_preview: str | None = None,
         response_phase: str = "ack",
         importance: str = "info",
         deliver_to_bound_conversations: bool = True,
@@ -10285,6 +10290,12 @@ class ArtifactService:
             "decision_request": "decision",
             "approval_result": "approval",
         }.get(kind, "progress")
+        full_message = str(message or "").strip()
+        summary_preview_resolved = (
+            self._summary_preview_text(summary_preview, limit=220)
+            if summary_preview is not None
+            else self._summary_preview_text(full_message, limit=220)
+        )
         options_resolved = options or []
         surface_actions_resolved = [dict(item) for item in (surface_actions or []) if isinstance(item, dict)]
         connector_hints_resolved = self._normalize_connector_hints(connector_hints)
@@ -10370,7 +10381,7 @@ class ArtifactService:
                 "guidance": guidance,
             }
         suppress_resolved = (kind == "progress") if suppress_if_unchanged is None else bool(suppress_if_unchanged)
-        dedupe_key_resolved = str(dedupe_key or self._normalize_interaction_message(message)).strip() or None
+        dedupe_key_resolved = str(dedupe_key or self._normalize_interaction_message(full_message)).strip() or None
         if (
             kind == "progress"
             and suppress_resolved
@@ -10430,8 +10441,9 @@ class ArtifactService:
             "kind": durable_kind,
             "artifact_id": resolved_artifact_id,
             "status": "completed" if kind == "answer" else "active" if durable_kind == "progress" else "completed",
-            "message": message,
-            "summary": message,
+            "message": full_message,
+            "summary": summary_preview_resolved or full_message,
+            "summary_preview": summary_preview_resolved,
             "interaction_phase": "request" if kind == "decision_request" else response_phase,
             "importance": importance,
             "attachments": attachments_resolved,
@@ -10451,11 +10463,11 @@ class ArtifactService:
                 {
                     "verdict": "pending_user",
                     "action": "request_user_decision",
-                    "reason": message or "Decision request emitted for user review.",
+                    "reason": full_message or "Decision request emitted for user review.",
                 }
             )
         if durable_kind == "approval":
-            payload.setdefault("reason", message or "Approval result emitted.")
+            payload.setdefault("reason", full_message or "Approval result emitted.")
         artifact = self.record(
             quest_root,
             payload,
@@ -10467,7 +10479,7 @@ class ArtifactService:
             kind=kind,
             expects_reply=expects_reply_resolved,
             reply_mode=reply_mode_resolved,
-            message=message,
+            message=full_message,
             options=options_resolved,
             allow_free_text=allow_free_text,
             reply_schema=reply_schema_resolved,
@@ -10490,7 +10502,7 @@ class ArtifactService:
                     "quest_id": self._quest_id(quest_root),
                     "conversation_id": target,
                     "kind": kind,
-                    "message": message,
+                    "message": full_message,
                     "response_phase": response_phase,
                     "importance": importance,
                     "artifact_id": artifact.get("artifact_id"),
@@ -10538,7 +10550,8 @@ class ArtifactService:
             interaction_id=request_state.get("interaction_id"),
             artifact_id=artifact.get("artifact_id"),
             kind=kind,
-            message=message,
+            message=full_message,
+            summary_preview=summary_preview_resolved,
             dedupe_key=dedupe_key_resolved,
             response_phase=response_phase,
             reply_mode=reply_mode_resolved,

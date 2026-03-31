@@ -227,6 +227,7 @@ def test_local_workspace_does_not_route_markdown_or_commands_through_dead_notebo
 
 def test_web_workspace_keeps_streaming_operational_views_and_tool_effect_surface() -> None:
     acp_source = _read("src/ui/src/lib/acp.ts")
+    api_source = _read("src/ui/src/lib/api.ts")
     tool_ops_source = _read("src/ui/src/lib/toolOperations.ts")
     bash_tool_source = _read("src/ui/src/components/workspace/QuestBashExecOperation.tsx")
     workspace_surface_source = _read("src/ui/src/components/workspace/QuestWorkspaceSurface.tsx")
@@ -237,17 +238,20 @@ def test_web_workspace_keeps_streaming_operational_views_and_tool_effect_surface
     workspace_i18n_source = _read("src/ui/src/lib/i18n/messages/workspace.ts")
 
     assert "pendingFeed.some(" in acp_source
+    assert "baselineCompare: (questId: string) =>" in api_source
     assert "window.setTimeout" in acp_source
     assert "client.workflow(targetQuestId)" in acp_source
     assert "ensureViewData" in acp_source
-    assert "view === 'details' || view === 'memory'" in acp_source
+    assert "detailsEnabledRef.current = true" in acp_source
+    assert "await flushDetailsRefresh(questId)" in acp_source
     assert "insertHistoryItemChronologically" in acp_source
     assert "previous_run_id" in acp_source
     assert "collectSealedAssistantRunIds(initialUpdates)" in acp_source
     assert "item.label === 'run_failed'" in acp_source
-    assert "void ensureViewData(view)" in workspace_surface_source
+    assert "void ensureViewData('details')" in workspace_surface_source
     assert "onOpenStageSelection={onOpenStageSelection}" in workspace_surface_source
     assert "QuestMemorySurface" in workspace_surface_source
+    assert 'title="Baseline Compare"' in workspace_surface_source
     assert "updateView('memory')" in workspace_surface_source
     assert "onStageOpen(selection)" in lab_canvas_source
     assert "selectionType !== 'workflow_placeholder'" in lab_canvas_source

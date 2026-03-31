@@ -100,6 +100,7 @@ It defines things like:
 - do not end a quest early
 - treat web, TUI, and connectors as one quest
 - user-facing reporting style
+- baseline confirmation discipline, including preserving the richer metric surface instead of keeping only one headline scalar when the source baseline exposes multiple comparable metrics or variants
 
 If the agent starts sounding wrong everywhere, `system.md` is one of the first places to inspect.
 
@@ -113,6 +114,7 @@ It tells the agent:
 - queued inbound user messages must be acknowledged and handled first
 - blocking replies are for real decisions only
 - progress updates should be concise and human-readable
+- the real user-facing interaction message should stay complete; the runtime may derive a shorter preview separately, so the agent should not manually truncate the actual connector answer with `...` / `…`
 
 If the model is bad at staying in the same long-running thread, this file matters a lot.
 

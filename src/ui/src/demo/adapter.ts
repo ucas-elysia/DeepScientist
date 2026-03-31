@@ -1,4 +1,5 @@
 import type {
+  BaselineComparePayload,
   ExplorerNode,
   ExplorerPayload,
   GitBranchesPayload,
@@ -1276,6 +1277,46 @@ export function getDemoMetricsTimeline(projectId: string): MetricsTimelinePayloa
         ],
       },
     ],
+  }
+}
+
+export function getDemoBaselineCompare(projectId: string): BaselineComparePayload | null {
+  const timeline = getDemoMetricsTimeline(projectId)
+  if (!timeline) return null
+  return {
+    quest_id: projectId,
+    primary_metric_id: timeline.primary_metric_id,
+    total_entries: timeline.series.reduce(
+      (max, series) => Math.max(max, (series.baselines || []).length),
+      0
+    ),
+    baseline_ref: timeline.baseline_ref,
+    entries:
+      timeline.series[0]?.baselines.map((baseline) => ({
+        entry_key: `${baseline.baseline_id || 'baseline'}::${baseline.variant_id || 'default'}`,
+        baseline_id: baseline.baseline_id,
+        variant_id: baseline.variant_id,
+        label: baseline.label,
+        selected: baseline.selected,
+        metric_count: timeline.series.length,
+      })) || [],
+    series: timeline.series.map((series) => ({
+      metric_id: series.metric_id,
+      label: series.label,
+      direction: series.direction,
+      unit: series.unit,
+      decimals: series.decimals,
+      chart_group: series.chart_group,
+      values: (series.baselines || []).map((baseline) => ({
+        entry_key: `${baseline.baseline_id || 'baseline'}::${baseline.variant_id || 'default'}`,
+        label: baseline.label,
+        baseline_id: baseline.baseline_id,
+        variant_id: baseline.variant_id,
+        selected: baseline.selected,
+        value: baseline.value,
+        raw_value: baseline.raw_value,
+      })),
+    })),
   }
 }
 

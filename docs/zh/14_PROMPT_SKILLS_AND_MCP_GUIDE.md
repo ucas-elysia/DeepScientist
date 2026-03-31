@@ -100,6 +100,7 @@ DeepScientist 不是靠一份静态大 prompt 工作的。
 - 不要过早结束 quest
 - Web、TUI、connector 属于同一个 quest
 - 用户可见的汇报风格
+- baseline 提交与确认的纪律：如果源 baseline 暴露了多指标或多 variant，就要保留完整比较面，而不是只留下一个 headline scalar
 
 如果你发现 agent 在所有场景里行为都不对，`system.md` 一定是首要检查点之一。
 
@@ -113,6 +114,7 @@ DeepScientist 不是靠一份静态大 prompt 工作的。
 - 排队中的用户消息必须优先确认和处理
 - `blocking` 只该用于真实用户决策
 - 进展汇报应该简洁且可读
+- 真正发给用户的交互消息应保持完整；系统会单独生成短预览，所以 agent 不应该自己把 connector 回复截成 `...` / `…`
 
 如果模型经常在长任务里“断线”或者不会接住用户后续消息，这个文件非常关键。
 

@@ -1,4 +1,5 @@
 import type {
+  BaselineComparePayload,
   BaselineRegistryEntry,
   ConfigFileEntry,
   ConfigTestPayload,
@@ -35,6 +36,7 @@ import type {
 import {
   getDemoGitCompare,
   getDemoExplorerPayload,
+  getDemoBaselineCompare,
   getDemoGitBranches,
   getDemoGitDiffFile,
   getDemoMetricsTimeline,
@@ -314,6 +316,16 @@ export const client = {
       return Promise.resolve(payload)
     }
     return api<MetricsTimelinePayload>(`/api/quests/${questId}/metrics/timeline`)
+  },
+  baselineCompare: (questId: string) => {
+    if (isDemoProjectId(questId)) {
+      const payload = getDemoBaselineCompare(questId)
+      if (!payload) {
+        throw new Error(`Unknown demo baseline compare payload for ${questId}`)
+      }
+      return Promise.resolve(payload)
+    }
+    return api<BaselineComparePayload>(`/api/quests/${questId}/baselines/compare`)
   },
   gitBranches: (questId: string) => {
     if (isDemoProjectId(questId)) {

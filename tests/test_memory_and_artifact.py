@@ -2607,6 +2607,34 @@ def test_idea_interaction_message_stays_concise_and_design_focused(temp_home: Pa
     assert len(message.splitlines()) <= 4
 
 
+def test_idea_interaction_message_keeps_full_text_without_inline_truncation(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    quest_service = QuestService(temp_home, skill_installer=SkillInstaller(repo_root(), temp_home))
+    artifact = ArtifactService(temp_home)
+    quest = quest_service.create("full idea interaction quest")
+    quest_root = Path(quest["quest_root"])
+
+    long_tail = "final detail token for the user-facing idea message"
+    message = artifact._build_idea_interaction_message(
+        quest_root=quest_root,
+        action="create",
+        idea_id="idea-002",
+        title="Long-form routing adapter",
+        mechanism=f"Add a routing adapter that keeps the quantized path stable and preserves {long_tail}.",
+        method_brief=f"Use a staged router with explicit fallback control and preserve {long_tail}.",
+        foundation_label="baseline model",
+        branch_name="idea/quest-idea-002",
+        change_layer="adapter block and scheduling policy",
+        source_lens="conditional routing with explicit fallback stability constraints",
+        expected_gain=f"improve calibration and preserve {long_tail}",
+        next_target="experiment",
+    )
+
+    assert long_tail in message
+    assert "…" not in message
+
+
 def test_submit_idea_lineage_intent_creates_child_and_sibling_like_nodes(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()
@@ -4485,6 +4513,47 @@ def test_duplicate_progress_is_suppressed_when_message_is_unchanged(temp_home: P
     journal = read_jsonl(quest_root / ".ds" / "interaction_journal.jsonl")
     outbound = [item for item in journal if str(item.get("type") or "") == "artifact_outbound"]
     assert len(outbound) == 1
+
+
+def test_interact_preserves_full_message_for_delivery_and_records_summary_preview(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    quest_service = QuestService(temp_home, skill_installer=SkillInstaller(repo_root(), temp_home))
+    quest = quest_service.create("interaction preview split quest")
+    quest_root = Path(quest["quest_root"])
+    artifact = ArtifactService(temp_home)
+
+    long_tail = "tail marker that must remain visible to the connector user"
+    long_message = (
+        "This is a long milestone update that should stay complete in the actual delivered message. "
+        "It includes implementation notes, expected impact, and a precise end marker: "
+        f"{long_tail}."
+    )
+
+    result = artifact.interact(
+        quest_root,
+        kind="milestone",
+        message=long_message,
+        deliver_to_bound_conversations=True,
+        include_recent_inbound_messages=False,
+    )
+
+    assert result["status"] == "ok"
+
+    progress_records = sorted((quest_root / "artifacts" / "milestones").glob("*.json"))
+    assert progress_records
+    record = read_json(progress_records[-1], {})
+    assert record["message"] == long_message
+    assert record["summary_preview"].endswith("…")
+    assert long_tail not in record["summary_preview"]
+
+    journal = read_jsonl(quest_root / ".ds" / "interaction_journal.jsonl")
+    outbound = [item for item in journal if str(item.get("type") or "") == "artifact_outbound"]
+    assert outbound[-1]["message"] == long_message
+    assert outbound[-1]["summary_preview"].endswith("…")
+
+    outbox = read_jsonl(temp_home / "logs" / "connectors" / "local" / "outbox.jsonl")
+    assert long_tail in str(outbox[-1].get("message") or "")
 
 
 def test_failed_connector_delivery_does_not_refresh_visible_interaction_timestamp(temp_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
