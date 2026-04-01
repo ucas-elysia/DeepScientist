@@ -229,18 +229,12 @@ If this is your first run, prefer an isolated environment, a non-root user, and 
 
 ## Product Preview
 
-### Home page / project entry
 
-![DeepScientist home page](docs/images/quickstart/00-home.png)
 
 ### Projects surface after long-running work
 
 ![DeepScientist projects surface](assets/branding/projects.png)
 
-> [TODO asset] Two visual additions would help this README a lot:
->
-> 1. a `Start Research` dialog screenshot to emphasize "launch a real research task in natural language"
-> 2. a workspace or Canvas screenshot to emphasize "visible, steerable, reviewable research progress"
 
 ## Who Will Love DeepScientist Most?
 
