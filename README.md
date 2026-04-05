@@ -40,7 +40,7 @@
   <a href="docs/en/15_CODEX_PROVIDER_SETUP.md">Model Setup</a>
 </p>
 
-![deepscientist_install](assets/readme/00-home.png)
+![deepscientist_install](https://github.com/user-attachments/assets/d8244944-4f70-4e08-94e3-002b74ce70fb)
 
 If you are tired of paper overload, broken baselines, scattered experiment logs, and late-night writing cleanup, give the project a star first, then keep scrolling to see how much research grunt work it can take off your plate.
 
@@ -337,15 +337,6 @@ If this is your first run, prefer an isolated environment, a non-root user, and 
 
 ## Autonomous Research Systems
 
-### Compact Capability Comparison
-
-| System | Local-first | Research Map | Workshop / Human Takeover | Keeps Growing | Channels | Paper / Review / Rebuttal |
-|---|---|---|---|---|---|---|
-| AutoResearchClaw |  |  |  | ✓ | ✓ |  |
-| AI-Scientist-v2 |  |  |  |  |  |  |
-| Agent Laboratory |  |  | ✓ | ✓ |  |  |
-| DeepScientist | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-
 ### End-to-End Autonomous Research Systems
 
 | System | System Type | E2E | Research Map | Workshop | Keeps Growing | Channels | Figure & Rebuttal & Review |
@@ -414,10 +405,6 @@ year={2026},
 url={https://openreview.net/forum?id=cZFgsLq8Gs}
 }
 ```
-
-## License
-
-[Apache License 2.0](LICENSE)
 
 If this feels like the research workflow you have been waiting for, give the project a star. Every star makes it easier for more researchers who actually need it to find it.
 
