@@ -4097,8 +4097,737 @@ def test_quest_control_resume_marks_quest_active(temp_home: Path) -> None:
     assert payload["snapshot"]["status"] == "active"
     history = app.quest_service.history(quest_id)
     assert any(
-        "?????" in str(item.get("content") or "")
-        or "daemon" in str(item.get("content") or "").lower()
+        item.get("role") == "assistant"
+        and "DeepScientist" in str(item.get("content") or "")
+        and ("恢复运行" in str(item.get("content") or "") or "resumed" in str(item.get("content") or "").lower())
+        for item in history
+    )
+    outbox_path = temp_home / "logs" / "connectors" / "local" / "outbox.jsonl"
+    outbox = [json.loads(line) for line in outbox_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(
+        "DeepScientist" in str(item.get("message") or "")
+        and ("恢复运行" in str(item.get("message") or "") or "resumed" in str(item.get("message") or "").lower())
+        for item in outbox
+    )
+
+
+def test_quest_control_pause_marks_quest_paused_and_interrupts_runner(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("pause quest")
+    quest_id = quest["quest_id"]
+
+    class InterruptibleRunner:
+        binary = ""
+
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.interrupted = threading.Event()
+
+        def run(self, request):
+            self.started.set()
+            while not self.interrupted.is_set():
+                time.sleep(0.05)
+            history_root = ensure_dir(request.quest_root / ".ds" / "codex_history" / request.run_id)
+            run_root = ensure_dir(request.quest_root / ".ds" / "runs" / request.run_id)
+            return RunResult(
+                ok=False,
+                run_id=request.run_id,
+                model=request.model,
+                output_text="Interrupted.",
+                exit_code=130,
+                history_root=history_root,
+                run_root=run_root,
+                stderr_text="paused by user",
+            )
+
+        def interrupt(self, quest_id: str) -> bool:
+            self.interrupted.set()
+            return True
+
+    runner = InterruptibleRunner()
+    app.runners["codex"] = runner
+
+    payload = app.handlers.chat(quest_id, {"text": "Pause this long task.", "source": "tui-ink"})
+    assert payload["ok"] is True
+    assert runner.started.wait(timeout=2)
+    running_snapshot = app.quest_service.snapshot(quest_id)
+    assert running_snapshot["status"] == "running"
+    assert running_snapshot["active_run_id"]
+
+    pause_payload = app.handlers.quest_control(quest_id, {"action": "pause", "source": "tui-ink"})
+
+    assert pause_payload["ok"] is True
+    assert pause_payload["action"] == "pause"
+    assert pause_payload["interrupted"] is True
+    assert pause_payload["snapshot"]["status"] == "paused"
+    assert "发送任意新指令" in str(pause_payload["notice"]["message"])
+
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        paused_snapshot = app.quest_service.snapshot(quest_id)
+        if paused_snapshot["status"] == "paused" and paused_snapshot["active_run_id"] is None:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("paused quest did not clear active_run_id after the runner exited")
+
+
+def test_quest_control_stop_stops_runner_owned_bash_exec_sessions(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("stop quest with bash")
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+
+    class InterruptibleRunner:
+        binary = ""
+
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.interrupted = threading.Event()
+
+        def run(self, request):
+            self.started.set()
+            while not self.interrupted.is_set():
+                time.sleep(0.05)
+            history_root = ensure_dir(request.quest_root / ".ds" / "codex_history" / request.run_id)
+            run_root = ensure_dir(request.quest_root / ".ds" / "runs" / request.run_id)
+            return RunResult(
+                ok=False,
+                run_id=request.run_id,
+                model=request.model,
+                output_text="Interrupted.",
+                exit_code=130,
+                history_root=history_root,
+                run_root=run_root,
+                stderr_text="stopped by user",
+            )
+
+        def interrupt(self, quest_id: str) -> bool:
+            self.interrupted.set()
+            return True
+
+    runner = InterruptibleRunner()
+    app.runners["codex"] = runner
+
+    payload = app.handlers.chat(quest_id, {"text": "Stop this long task.", "source": "web-react"})
+    assert payload["ok"] is True
+    assert runner.started.wait(timeout=2)
+
+    running_snapshot = app.quest_service.snapshot(quest_id)
+    active_run_id = str(running_snapshot["active_run_id"] or "")
+    assert active_run_id
+
+    context = McpContext(
+        home=temp_home,
+        quest_id=quest_id,
+        quest_root=quest_root,
+        run_id=active_run_id,
+        active_anchor="experiment",
+        conversation_id=f"quest:{quest_id}",
+        agent_role="pi",
+        worker_id=None,
+        worktree_root=None,
+        team_mode="single",
+    )
+    session = app.bash_exec_service.start_session(
+        context,
+        command="printf 'alpha\\n'; sleep 5; printf 'omega\\n'",
+        mode="detach",
+    )
+    bash_id = session["bash_id"]
+    time.sleep(0.6)
+
+    stop_payload = app.handlers.quest_control(quest_id, {"action": "stop", "source": "web-react"})
+
+    assert stop_payload["ok"] is True
+    assert stop_payload["action"] == "stop"
+    assert stop_payload["interrupted"] is True
+    assert stop_payload["snapshot"]["status"] == "stopped"
+    assert bash_id in stop_payload["stopped_bash_session_ids"]
+    assert "发送任意新指令" in str(stop_payload["notice"]["message"])
+
+    final = app.bash_exec_service.wait_for_session(quest_root, bash_id, timeout_seconds=10)
+    assert final["status"] == "terminated"
+
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        stopped_snapshot = app.quest_service.snapshot(quest_id)
+        if stopped_snapshot["status"] == "stopped" and stopped_snapshot["active_run_id"] is None:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("stopped quest did not clear active_run_id after the runner exited")
+
+
+def test_admin_shutdown_endpoint_requests_daemon_shutdown(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+
+    payload = app.handlers.admin_shutdown({"source": "pytest"})
+
+    assert payload["ok"] is True
+    assert "shutdown requested" in payload["message"].lower()
+    assert app._shutdown_requested.is_set() is True
+
+
+def test_admin_shutdown_interrupts_running_quest_and_clears_active_run(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("shutdown interrupt quest")
+    quest_id = quest["quest_id"]
+
+    class InterruptOnlyRunner:
+        binary = ""
+
+        def __init__(self) -> None:
+            self.interrupt_calls: list[str] = []
+
+        def interrupt(self, target_quest_id: str) -> bool:
+            self.interrupt_calls.append(target_quest_id)
+            return True
+
+    runner = InterruptOnlyRunner()
+    app.runners["codex"] = runner
+    app.quest_service.mark_turn_started(quest_id, run_id="run-stale-001", status="running")
+
+    payload = app.handlers.admin_shutdown({"source": "pytest"})
+
+    assert payload["ok"] is True
+    assert quest_id in payload["interrupted_quests"]
+    assert runner.interrupt_calls == [quest_id]
+
+    snapshot = app.quest_service.snapshot(quest_id)
+    assert snapshot["status"] == "stopped"
+    assert snapshot["active_run_id"] is None
+
+
+def test_daemon_startup_reconciles_stale_running_quest(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    first_app = DaemonApp(temp_home)
+    quest = first_app.quest_service.create("reconcile stale runtime quest")
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+
+    quest_yaml = read_yaml(quest_root / "quest.yaml", {})
+    quest_yaml["status"] = "running"
+    quest_yaml["active_run_id"] = "run-crashed-001"
+    write_yaml(quest_root / "quest.yaml", quest_yaml)
+    runtime_state = read_json(quest_root / ".ds" / "runtime_state.json", {})
+    runtime_state["status"] = "running"
+    runtime_state["active_run_id"] = "run-crashed-001"
+    runtime_state["last_transition_at"] = utc_now()
+    write_json(quest_root / ".ds" / "runtime_state.json", runtime_state)
+
+    app = DaemonApp(temp_home)
+
+    snapshot = app.quest_service.snapshot(quest_id)
+    assert snapshot["status"] == "stopped"
+    assert snapshot["active_run_id"] is None
+    assert any(item["quest_id"] == quest_id for item in app.reconciled_quests)
+    assert any(item["quest_id"] == quest_id and item.get("recoverable") is True for item in app.reconciled_quests)
+
+    events = app.quest_service.events(quest_id)["events"]
+    assert any(
+        item.get("type") == "quest.runtime_reconciled"
+        and item.get("abandoned_run_id") == "run-crashed-001"
+        for item in events
+    )
+
+
+def test_submit_user_message_reconciles_stale_active_turn_and_starts_new_run(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("stale active turn submit quest")
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+    app.quest_service.set_continuation_state(quest_root, policy="none")
+
+    stale_run_id = "run-stale-submit-001"
+    app.quest_service.mark_turn_started(quest_id, run_id=stale_run_id, status="running")
+    stale_run_root = ensure_dir(quest_root / ".ds" / "runs" / stale_run_id)
+    write_json(
+        stale_run_root / "result.json",
+        {
+            "ok": True,
+            "run_id": stale_run_id,
+            "model": "gpt-5.4",
+            "exit_code": 0,
+            "output_text": "stale result",
+            "stderr_text": "",
+            "completed_at": utc_now(),
+        },
+    )
+
+    class RecoveryRunner:
+        binary = ""
+
+        def __init__(self) -> None:
+            self.requests: list[str] = []
+
+        def run(self, request):
+            self.requests.append(request.message)
+            history_root = ensure_dir(request.quest_root / ".ds" / "codex_history" / request.run_id)
+            run_root = ensure_dir(request.quest_root / ".ds" / "runs" / request.run_id)
+            return RunResult(
+                ok=True,
+                run_id=request.run_id,
+                model=request.model,
+                output_text=f"Recovered: {request.message}",
+                exit_code=0,
+                history_root=history_root,
+                run_root=run_root,
+                stderr_text="",
+            )
+
+    runner = RecoveryRunner()
+    app.runners["codex"] = runner
+
+    payload = app.submit_user_message(
+        quest_id,
+        text="Please continue after stale state.",
+        source="web-react",
+    )
+
+    assert payload["started"] is True
+    assert payload["queued"] is False
+
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        if runner.requests:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("stale active turn was not reconciled into a fresh run")
+
+    assert runner.requests[0] == "Please continue after stale state."
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        snapshot = app.quest_service.snapshot(quest_id)
+        if snapshot["active_run_id"] is None:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("fresh run did not clear active_run_id after completing")
+
+    events = app.quest_service.events(quest_id)["events"]
+    assert any(
+        item.get("type") == "quest.turn_state_reconciled"
+        and item.get("abandoned_run_id") == stale_run_id
+        for item in events
+    )
+
+
+def test_submit_user_message_recovers_stalled_live_turn_and_starts_new_run(
+    temp_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("stalled live turn recovery quest")
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+    app.quest_service.set_continuation_state(quest_root, policy="none")
+
+    stale_run_id = "run-stalled-live-001"
+    app.quest_service.mark_turn_started(quest_id, run_id=stale_run_id, status="running")
+
+    interrupt_requested = threading.Event()
+
+    def _old_worker() -> None:
+        while not interrupt_requested.is_set():
+            time.sleep(0.02)
+
+    old_worker = threading.Thread(target=_old_worker, daemon=True, name=f"pytest-stalled-worker-{quest_id}")
+    old_worker.start()
+
+    class RecoveryRunner:
+        binary = ""
+
+        def __init__(self) -> None:
+            self.interrupt_calls: list[str] = []
+            self.requests: list[str] = []
+
+        def run(self, request):
+            self.requests.append(request.message)
+            history_root = ensure_dir(request.quest_root / ".ds" / "codex_history" / request.run_id)
+            run_root = ensure_dir(request.quest_root / ".ds" / "runs" / request.run_id)
+            return RunResult(
+                ok=True,
+                run_id=request.run_id,
+                model=request.model,
+                output_text=f"Recovered stalled turn: {request.message}",
+                exit_code=0,
+                history_root=history_root,
+                run_root=run_root,
+                stderr_text="",
+            )
+
+        def interrupt(self, target_quest_id: str) -> bool:
+            self.interrupt_calls.append(target_quest_id)
+            interrupt_requested.set()
+            return True
+
+    runner = RecoveryRunner()
+    app.runners["codex"] = runner
+    app._turn_state[quest_id] = {
+        "running": True,
+        "pending": False,
+        "stop_requested": False,
+        "reason": "user_message",
+        "worker": old_worker,
+    }
+
+    def _fake_stalled_running_turn_details(
+        target_quest_id: str,
+        *,
+        snapshot: dict | None = None,
+        turn_state: dict[str, object] | None = None,
+        turn_reason: str,
+    ) -> dict[str, int] | None:
+        if target_quest_id != quest_id or turn_reason != "user_message":
+            return None
+        if not dict(turn_state or {}).get("running"):
+            return None
+        return {
+            "pending_user_count": int((snapshot or {}).get("pending_user_message_count") or 1),
+            "silent_seconds": _STALLED_RUNNING_TURN_INACTIVITY_SECONDS,
+        }
+
+    monkeypatch.setattr(app, "_stalled_running_turn_details", _fake_stalled_running_turn_details)
+
+    payload = app.submit_user_message(
+        quest_id,
+        text="Please recover the stalled worker.",
+        source="web-react",
+    )
+
+    assert payload["started"] is True
+    assert payload["queued"] is False
+
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        if not old_worker.is_alive() and runner.requests:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("stalled live turn was not recovered into a fresh run")
+
+    assert runner.interrupt_calls == [quest_id]
+    assert runner.requests == ["Please recover the stalled worker."]
+
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        snapshot = app.quest_service.snapshot(quest_id)
+        if snapshot["active_run_id"] is None:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("recovered run did not clear active_run_id after completing")
+
+    events = app.quest_service.events(quest_id)["events"]
+    assert any(
+        item.get("type") == "quest.turn_state_reconciled"
+        and item.get("abandoned_run_id") == stale_run_id
+        and item.get("recovery_kind") == "stalled_live_turn"
+        for item in events
+    )
+
+
+def test_stalled_live_turn_recovery_pending_does_not_reinterrupt_or_clear_stop_requested(
+    temp_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("stalled recovery pending quest")
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+    app.quest_service.set_continuation_state(quest_root, policy="none")
+
+    stale_run_id = "run-stalled-live-pending-001"
+    app.quest_service.mark_turn_started(quest_id, run_id=stale_run_id, status="running")
+
+    release_worker = threading.Event()
+
+    def _old_worker() -> None:
+        while not release_worker.is_set():
+            time.sleep(0.02)
+
+    old_worker = threading.Thread(target=_old_worker, daemon=True, name=f"pytest-stalled-pending-{quest_id}")
+    old_worker.start()
+
+    class PendingRecoveryRunner:
+        binary = ""
+
+        def __init__(self) -> None:
+            self.interrupt_calls: list[str] = []
+            self.requests: list[str] = []
+
+        def run(self, request):
+            self.requests.append(request.message)
+            history_root = ensure_dir(request.quest_root / ".ds" / "codex_history" / request.run_id)
+            run_root = ensure_dir(request.quest_root / ".ds" / "runs" / request.run_id)
+            return RunResult(
+                ok=True,
+                run_id=request.run_id,
+                model=request.model,
+                output_text=f"Recovered after wait: {request.message}",
+                exit_code=0,
+                history_root=history_root,
+                run_root=run_root,
+                stderr_text="",
+            )
+
+        def interrupt(self, target_quest_id: str) -> bool:
+            self.interrupt_calls.append(target_quest_id)
+            return True
+
+    runner = PendingRecoveryRunner()
+    app.runners["codex"] = runner
+    app._turn_state[quest_id] = {
+        "running": True,
+        "pending": False,
+        "stop_requested": False,
+        "reason": "user_message",
+        "worker": old_worker,
+    }
+
+    def _fake_stalled_running_turn_details(
+        target_quest_id: str,
+        *,
+        snapshot: dict | None = None,
+        turn_state: dict[str, object] | None = None,
+        turn_reason: str,
+    ) -> dict[str, int] | None:
+        if target_quest_id != quest_id or turn_reason != "user_message":
+            return None
+        if not dict(turn_state or {}).get("running"):
+            return None
+        return {
+            "pending_user_count": int((snapshot or {}).get("pending_user_message_count") or 1),
+            "silent_seconds": _STALLED_RUNNING_TURN_INACTIVITY_SECONDS,
+        }
+
+    monkeypatch.setattr(app, "_stalled_running_turn_details", _fake_stalled_running_turn_details)
+    monkeypatch.setattr(
+        app,
+        "_wait_for_turn_worker_exit",
+        lambda target_quest_id, timeout_seconds: app._refresh_turn_worker_state(target_quest_id),
+    )
+
+    payload = app.submit_user_message(
+        quest_id,
+        text="Please recover once the stale worker exits.",
+        source="web-react",
+    )
+
+    assert payload["started"] is False
+    assert payload["queued"] is True
+    assert payload["reason"] == "stalled_turn_recovery_pending"
+    assert runner.interrupt_calls == [quest_id]
+
+    state = dict(app._turn_state.get(quest_id) or {})
+    assert state["running"] is True
+    assert state["stop_requested"] is True
+    assert state["pending"] is False
+    assert state["recovery_pending"] is True
+
+    second_payload = app.schedule_turn(quest_id, reason="user_message")
+
+    assert second_payload["started"] is False
+    assert second_payload["queued"] is True
+    assert second_payload["reason"] == "stalled_turn_recovery_pending"
+    assert runner.interrupt_calls == [quest_id]
+
+    state = dict(app._turn_state.get(quest_id) or {})
+    assert state["stop_requested"] is True
+    assert state["recovery_pending"] is True
+    assert runner.requests == []
+
+    release_worker.set()
+    old_worker.join(timeout=2)
+    assert old_worker.is_alive() is False
+
+    resumed = app.schedule_turn(quest_id, reason="user_message")
+    assert resumed["started"] is True
+    assert resumed["queued"] is False
+    assert runner.interrupt_calls == [quest_id]
+
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        if runner.requests:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("queued user message was not processed after the stale worker exited")
+
+    assert runner.requests == ["Please recover once the stale worker exits."]
+
+def test_run_quest_turn_clears_active_run_when_assistant_append_fails(
+    temp_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("append failure cleanup quest")
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+    app.quest_service.set_continuation_state(quest_root, policy="none")
+
+    app.quest_service.append_message(
+        quest_id,
+        role="user",
+        content="Please inspect the failure path.",
+        source="web-react",
+    )
+
+    class SuccessfulRunner:
+        binary = ""
+
+        def run(self, request):
+            history_root = ensure_dir(request.quest_root / ".ds" / "codex_history" / request.run_id)
+            run_root = ensure_dir(request.quest_root / ".ds" / "runs" / request.run_id)
+            return RunResult(
+                ok=True,
+                run_id=request.run_id,
+                model=request.model,
+                output_text="Assistant output should still clear runtime state.",
+                exit_code=0,
+                history_root=history_root,
+                run_root=run_root,
+                stderr_text="",
+            )
+
+    app.runners["codex"] = SuccessfulRunner()
+
+    original_append_message = app.quest_service.append_message
+
+    def _broken_append_message(target_quest_id, role, content, source="local", **kwargs):  # noqa: ANN001
+        if role == "assistant":
+            raise RuntimeError("assistant append exploded")
+        return original_append_message(target_quest_id, role, content, source=source, **kwargs)
+
+    monkeypatch.setattr(app.quest_service, "append_message", _broken_append_message)
+
+    app._turn_state[quest_id] = {"running": True, "pending": False, "reason": "user_message"}
+    app._run_quest_turn(quest_id)
+
+    snapshot = app.quest_service.snapshot(quest_id)
+    assert snapshot["active_run_id"] is None
+    assert snapshot["status"] == "active"
+
+    events = app.quest_service.events(quest_id)["events"]
+    assert any(
+        item.get("type") == "runner.turn_postprocess_warning"
+        and item.get("stage") == "append_message"
+        for item in events
+    )
+
+
+def test_drain_turns_clears_running_state_after_worker_exception(
+    temp_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    quest = app.quest_service.create("turn drain exception quest")
+    quest_id = quest["quest_id"]
+
+    def _boom(_quest_id: str) -> None:
+        raise RuntimeError("turn exploded")
+
+    monkeypatch.setattr(app, "_run_quest_turn", _boom)
+
+    app._turn_state[quest_id] = {"running": True, "pending": True, "reason": "user_message"}
+    app._drain_turns(quest_id)
+
+    state = dict(app._turn_state.get(quest_id) or {})
+    assert state["running"] is False
+    assert "worker" not in state
+
+
+def test_daemon_auto_resumes_recent_reconciled_quest(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    first_app = DaemonApp(temp_home)
+    quest = first_app.quest_service.create("auto recover recent quest")
+    quest_id = quest["quest_id"]
+    quest_root = Path(quest["quest_root"])
+
+    quest_yaml = read_yaml(quest_root / "quest.yaml", {})
+    quest_yaml["status"] = "running"
+    quest_yaml["active_run_id"] = "run-crashed-002"
+    quest_yaml["updated_at"] = utc_now()
+    write_yaml(quest_root / "quest.yaml", quest_yaml)
+    runtime_state = read_json(quest_root / ".ds" / "runtime_state.json", {})
+    runtime_state["status"] = "running"
+    runtime_state["active_run_id"] = "run-crashed-002"
+    runtime_state["last_transition_at"] = utc_now()
+    write_json(quest_root / ".ds" / "runtime_state.json", runtime_state)
+
+    app = DaemonApp(temp_home)
+
+    class RecoveryRunner:
+        binary = ""
+
+        def __init__(self) -> None:
+            self.requests: list[dict[str, str]] = []
+
+        def run(self, request):
+            self.requests.append(
+                {
+                    "run_id": request.run_id,
+                    "message": request.message,
+                    "turn_reason": request.turn_reason,
+                }
+            )
+            history_root = ensure_dir(request.quest_root / ".ds" / "codex_history" / request.run_id)
+            run_root = ensure_dir(request.quest_root / ".ds" / "runs" / request.run_id)
+            app.quest_service.mark_completed(request.quest_id)
+            return RunResult(
+                ok=True,
+                run_id=request.run_id,
+                model=request.model,
+                output_text="recovered",
+                exit_code=0,
+                history_root=history_root,
+                run_root=run_root,
+                stderr_text="",
+            )
+
+    runner = RecoveryRunner()
+    app.runners["codex"] = runner
+
+    recovered = app._resume_reconciled_quests()
+    assert any(item["quest_id"] == quest_id for item in recovered)
+
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        snapshot = app.quest_service.snapshot(quest_id)
+        if snapshot["status"] == "completed" and runner.requests:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("auto recovery did not resume the stale quest")
+
+    assert runner.requests[0]["turn_reason"] == "auto_continue"
+    assert runner.requests[0]["message"] == ""
+
+    history = app.quest_service.history(quest_id)
+    assert any(
+        "自动恢复" in str(item.get("content") or "")
         or "recovered automatically" in str(item.get("content") or "").lower()
         for item in history
         if str(item.get("source") or "") == "system-control"
@@ -4173,11 +4902,7 @@ def test_daemon_auto_resume_notifies_bound_connector(temp_home: Path) -> None:
     assert outbound["conversation_id"] == "qq:direct:RECOVER-USER-001"
     assert outbound["response_phase"] == "control"
     assert outbound["kind"] == "progress"
-    assert (
-        "?????" in str(outbound["message"] or "")
-        or "daemon" in str(outbound["message"] or "").lower()
-        or "recovered automatically" in str(outbound["message"] or "").lower()
-    )
+    assert "自动恢复" in str(outbound["message"] or "") or "recovered automatically" in str(outbound["message"] or "").lower()
 
 
 def test_daemon_does_not_auto_resume_old_reconciled_quest(temp_home: Path) -> None:

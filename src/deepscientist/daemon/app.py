@@ -1531,7 +1531,6 @@ class DaemonApp:
         )
         snapshot = self.quest_service.snapshot(quest_id)
         snapshot = self._reconcile_stale_active_turn(quest_id, snapshot=snapshot)
-        snapshot = self._recover_stalled_running_turn(quest_id, snapshot=snapshot, turn_reason="user_message")
         runtime_status = str(snapshot.get("runtime_status") or snapshot.get("status") or "").strip()
         auto_resumed = previous_status in {"stopped", "paused", "completed"} and runtime_status not in {"stopped", "paused", "completed"}
         if auto_resumed:
@@ -1544,7 +1543,23 @@ class DaemonApp:
                 summary=f"Quest {quest_id} automatically resumed after a new user message.",
                 automated=True,
             )
-        scheduled = self.schedule_turn(quest_id, reason="user_message")
+        turn_state = self._refresh_turn_worker_state(quest_id)
+        has_live_turn = bool(turn_state.get("running"))
+        stalled_details = self._stalled_running_turn_details(
+            quest_id,
+            snapshot=snapshot,
+            turn_state=turn_state,
+            turn_reason="user_message",
+        )
+        if runtime_status == "running" and has_live_turn and stalled_details is None:
+            scheduled = {
+                "scheduled": True,
+                "started": False,
+                "queued": True,
+                "reason": "queued_for_artifact_interact",
+            }
+        else:
+            scheduled = self.schedule_turn(quest_id, reason="user_message")
         return {
             "message": message,
             "auto_resumed": auto_resumed,
@@ -1707,12 +1722,21 @@ class DaemonApp:
     def schedule_turn(self, quest_id: str, *, reason: str = "user_message") -> dict:
         snapshot = self.quest_service.snapshot(quest_id)
         snapshot = self._reconcile_stale_active_turn(quest_id, snapshot=snapshot)
-        snapshot = self._recover_stalled_running_turn(quest_id, snapshot=snapshot, turn_reason=reason)
+        recovery = self._recover_stalled_running_turn(quest_id, snapshot=snapshot, turn_reason=reason)
+        snapshot = dict(recovery.get("snapshot") or snapshot)
+        if recovery.get("blocked"):
+            return {
+                "scheduled": True,
+                "started": False,
+                "queued": True,
+                "reason": "stalled_turn_recovery_pending",
+            }
         self._refresh_turn_worker_state(quest_id)
         with self._turn_lock:
             state = self._turn_state.setdefault(quest_id, {"running": False, "pending": False})
             state["pending"] = True
             state["stop_requested"] = False
+            state.pop("recovery_pending", None)
             state["reason"] = reason
             if state.get("running"):
                 return {
@@ -1904,9 +1928,18 @@ class DaemonApp:
         *,
         snapshot: dict | None = None,
         turn_reason: str,
-    ) -> dict:
+    ) -> dict[str, object]:
         snapshot = dict(snapshot or self.quest_service.snapshot(quest_id))
         turn_state = self._refresh_turn_worker_state(quest_id)
+        with self._turn_lock:
+            state = self._turn_state.setdefault(quest_id, {"running": False, "pending": False})
+            if state.get("recovery_pending") and state.get("running"):
+                return {
+                    "snapshot": snapshot,
+                    "blocked": True,
+                }
+            if state.get("recovery_pending") and not state.get("running"):
+                state.pop("recovery_pending", None)
         details = self._stalled_running_turn_details(
             quest_id,
             snapshot=snapshot,
@@ -1914,7 +1947,10 @@ class DaemonApp:
             turn_reason=turn_reason,
         )
         if details is None:
-            return snapshot
+            return {
+                "snapshot": snapshot,
+                "blocked": False,
+            }
 
         active_run_id = str(snapshot.get("active_run_id") or "").strip()
         runner_name = self._runner_name_for(snapshot)
@@ -1929,6 +1965,7 @@ class DaemonApp:
             state = self._turn_state.setdefault(quest_id, {"running": False, "pending": False})
             state["pending"] = False
             state["stop_requested"] = True
+            state["recovery_pending"] = True
         stopped_bash_session_ids = self._stop_active_bash_exec_sessions(
             quest_id,
             run_id=active_run_id or None,
@@ -1950,7 +1987,10 @@ class DaemonApp:
                 pending_user_message_count=int(details.get("pending_user_count") or 0),
                 interrupted=interrupted,
             )
-            return snapshot
+            return {
+                "snapshot": snapshot,
+                "blocked": True,
+            }
 
         previous_status = (
             str(snapshot.get("runtime_status") or snapshot.get("status") or snapshot.get("display_status") or "running").strip()
@@ -1999,8 +2039,11 @@ class DaemonApp:
         snapshot = self.quest_service.mark_turn_finished(quest_id, status=normalized_status)
         with self._turn_lock:
             state = self._turn_state.setdefault(quest_id, {"running": False, "pending": False})
-            state["stop_requested"] = False
-        return snapshot
+            state.pop("recovery_pending", None)
+        return {
+            "snapshot": snapshot,
+            "blocked": False,
+        }
 
     def control_quest(self, quest_id: str, *, action: str, source: str = "local") -> dict:
         normalized_action = str(action or "").strip().lower()
