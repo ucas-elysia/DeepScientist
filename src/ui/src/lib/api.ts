@@ -295,6 +295,141 @@ export const client = {
     api<QuestSearchPayload>(
       `/api/quests/${questId}/search?q=${encodeURIComponent(query)}&limit=${Math.max(1, Math.floor(limit))}`
     ),
+  createQuestFolder: (
+    questId: string,
+    payload: {
+      name: string
+      parent_path?: string | null
+    }
+  ) =>
+    api<{
+      ok: boolean
+      quest_id: string
+      parent_path?: string | null
+      saved_at?: string
+      item: {
+        name: string
+        path: string
+        kind: 'file' | 'directory'
+        folder_kind?: string
+        document_id?: string
+        open_kind?: string
+        updated_at?: string
+        size?: number
+        mime_type?: string
+      }
+    }>(`/api/quests/${questId}/files/folder`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  uploadQuestFile: (
+    questId: string,
+    payload: {
+      file_name: string
+      parent_path?: string | null
+      mime_type?: string | null
+      content_base64: string
+    }
+  ) =>
+    api<{
+      ok: boolean
+      quest_id: string
+      parent_path?: string | null
+      saved_at?: string
+      item: {
+        name: string
+        path: string
+        kind: 'file' | 'directory'
+        folder_kind?: string
+        document_id?: string
+        open_kind?: string
+        updated_at?: string
+        size?: number
+        mime_type?: string
+      }
+    }>(`/api/quests/${questId}/files/upload`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  renameQuestFile: (
+    questId: string,
+    payload: {
+      path: string
+      new_name: string
+    }
+  ) =>
+    api<{
+      ok: boolean
+      quest_id: string
+      previous_path?: string
+      saved_at?: string
+      item: {
+        name: string
+        path: string
+        kind: 'file' | 'directory'
+        folder_kind?: string
+        document_id?: string
+        open_kind?: string
+        updated_at?: string
+        size?: number
+        mime_type?: string
+      }
+    }>(`/api/quests/${questId}/files/rename`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  moveQuestFiles: (
+    questId: string,
+    payload: {
+      paths: string[]
+      target_parent_path?: string | null
+    }
+  ) =>
+    api<{
+      ok: boolean
+      quest_id: string
+      target_parent_path?: string | null
+      saved_at?: string
+      items: Array<{
+        name: string
+        path: string
+        kind: 'file' | 'directory'
+        folder_kind?: string
+        document_id?: string
+        open_kind?: string
+        updated_at?: string
+        size?: number
+        mime_type?: string
+      }>
+    }>(`/api/quests/${questId}/files/move`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  deleteQuestFiles: (
+    questId: string,
+    payload: {
+      paths: string[]
+    }
+  ) =>
+    api<{
+      ok: boolean
+      quest_id: string
+      saved_at?: string
+      items: Array<{
+        name: string
+        path: string
+        kind: 'file' | 'directory'
+        folder_kind?: string
+        document_id?: string
+        open_kind?: string
+        updated_at?: string
+        size?: number
+        mime_type?: string
+      }>
+    }>(`/api/quests/${questId}/files/delete`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   memory: (questId: string) => {
     if (isDemoProjectId(questId)) {
       const payload = listDemoMemory(questId)

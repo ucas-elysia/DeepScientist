@@ -26,6 +26,18 @@ type CachedQuestFile = FileAPIResponse & {
   document_id?: string
 }
 
+type QuestMutationItem = {
+  name: string
+  path: string
+  kind: 'file' | 'directory'
+  folder_kind?: string
+  document_id?: string
+  open_kind?: string
+  updated_at?: string
+  size?: number
+  mime_type?: string
+}
+
 const treeCache = new Map<string, { expiresAt: number; payload: FileTreeResponse }>()
 const treeInFlight = new Map<string, Promise<FileTreeResponse>>()
 const fileCache = new Map<string, CachedQuestFile>()
@@ -122,6 +134,11 @@ export function getQuestNodeProjectId(fileId: string): string | null {
   return ref?.projectId || null
 }
 
+export function getQuestNodeDocumentId(fileId: string): string | null {
+  const ref = parseQuestNodeId(fileId)
+  return ref?.type === 'file' ? ref.documentId : null
+}
+
 function parseQuestNodeId(fileId: string): QuestNodeRef | null {
   if (fileId.startsWith(QUEST_FILE_PREFIX)) {
     const raw = fileId.slice(QUEST_FILE_PREFIX.length)
@@ -156,6 +173,70 @@ function parentPath(path: string): string | null {
 function basename(path: string): string {
   const parts = path.split('/').filter(Boolean)
   return parts[parts.length - 1] || path
+}
+
+function toQuestFileApiResponse(projectId: string, item: QuestMutationItem): FileAPIResponse {
+  const updatedAt = item.updated_at || nowIso()
+  const currentParentPath = parentPath(item.path)
+
+  if (item.kind === 'directory') {
+    return {
+      id: encodeQuestDirId(projectId, item.path),
+      name: item.name,
+      type: 'folder',
+      folder_kind: item.folder_kind,
+      parent_id: currentParentPath ? encodeQuestDirId(projectId, currentParentPath) : null,
+      path: item.path,
+      created_at: updatedAt,
+      updated_at: updatedAt,
+      project_id: projectId,
+    }
+  }
+
+  const documentId = item.document_id || `path::${item.path}`
+  return {
+    id: encodeQuestFileId(projectId, documentId, item.path),
+    name: item.name,
+    type: 'file',
+    parent_id: currentParentPath ? encodeQuestDirId(projectId, currentParentPath) : null,
+    path: item.path,
+    size: item.size,
+    mime_type: item.mime_type || mimeTypeForPath(item.path, item.open_kind),
+    created_at: updatedAt,
+    updated_at: updatedAt,
+    project_id: projectId,
+  }
+}
+
+function resolveQuestParentPath(parentId?: string | null): string | null {
+  if (!parentId) return null
+  const ref = parseQuestNodeId(parentId)
+  if (!ref) {
+    throw new Error(`Unknown quest parent id: ${parentId}`)
+  }
+  return ref.type === 'dir' ? ref.path : parentPath(ref.path)
+}
+
+function resolveQuestNodePath(nodeId: string): string {
+  const ref = parseQuestNodeId(nodeId)
+  if (!ref) {
+    throw new Error(`Unknown quest node id: ${nodeId}`)
+  }
+  return ref.path
+}
+
+function resolveQuestProjectId(nodeIds: string[]): string {
+  const first = nodeIds[0]
+  const projectId = first ? getQuestNodeProjectId(first) : null
+  if (!projectId) {
+    throw new Error('Quest node id is required.')
+  }
+  for (const nodeId of nodeIds) {
+    if (getQuestNodeProjectId(nodeId) !== projectId) {
+      throw new Error('Quest file operations must stay within one project.')
+    }
+  }
+  return projectId
 }
 
 function ensureDirectory(
@@ -507,6 +588,82 @@ export async function getQuestFileBlob(fileId: string): Promise<Blob> {
   return new Blob([document.content || ''], {
     type: document.mime_type || mimeTypeForPath(ref.path, document.kind),
   })
+}
+
+export function getQuestNodeAssetUrl(fileId: string): string {
+  const ref = parseQuestNodeId(fileId)
+  if (!ref || ref.type !== 'file') {
+    throw new Error('Only quest files can resolve an asset URL.')
+  }
+  return `/api/quests/${ref.projectId}/documents/asset?document_id=${encodeURIComponent(ref.documentId)}`
+}
+
+export async function createQuestFolder(
+  projectId: string,
+  name: string,
+  parentId?: string | null
+): Promise<FileAPIResponse> {
+  const parentPath = resolveQuestParentPath(parentId)
+  const payload = await questClient.createQuestFolder(projectId, {
+    name,
+    parent_path: parentPath,
+  })
+  invalidateQuestFileTree(projectId)
+  return toQuestFileApiResponse(projectId, payload.item)
+}
+
+export async function uploadQuestFile(
+  projectId: string,
+  file: File,
+  parentId?: string | null,
+  onProgress?: (progress: number) => void
+): Promise<FileAPIResponse> {
+  const contentBase64 = await fileToBase64(file)
+  onProgress?.(25)
+  const payload = await questClient.uploadQuestFile(projectId, {
+    file_name: file.name,
+    mime_type: file.type || undefined,
+    parent_path: resolveQuestParentPath(parentId),
+    content_base64: contentBase64,
+  })
+  onProgress?.(100)
+  invalidateQuestFileTree(projectId)
+  return toQuestFileApiResponse(projectId, payload.item)
+}
+
+export async function renameQuestNode(
+  fileId: string,
+  newName: string
+): Promise<FileAPIResponse> {
+  const projectId = resolveQuestProjectId([fileId])
+  const payload = await questClient.renameQuestFile(projectId, {
+    path: resolveQuestNodePath(fileId),
+    new_name: newName,
+  })
+  invalidateQuestFileTree(projectId)
+  return toQuestFileApiResponse(projectId, payload.item)
+}
+
+export async function moveQuestNodes(
+  fileIds: string[],
+  targetParentId: string | null
+): Promise<void> {
+  if (fileIds.length === 0) return
+  const projectId = resolveQuestProjectId(fileIds)
+  await questClient.moveQuestFiles(projectId, {
+    paths: fileIds.map((fileId) => resolveQuestNodePath(fileId)),
+    target_parent_path: resolveQuestParentPath(targetParentId),
+  })
+  invalidateQuestFileTree(projectId)
+}
+
+export async function deleteQuestNodes(fileIds: string[]): Promise<void> {
+  if (fileIds.length === 0) return
+  const projectId = resolveQuestProjectId(fileIds)
+  await questClient.deleteQuestFiles(projectId, {
+    paths: fileIds.map((fileId) => resolveQuestNodePath(fileId)),
+  })
+  invalidateQuestFileTree(projectId)
 }
 
 async function fileToBase64(file: File): Promise<string> {

@@ -66,11 +66,22 @@ export function FileTreeNode({
   const clearWriteEffect = useFileTreeStore((state) => state.clearWriteEffect);
   const clearMoveEffect = useFileTreeStore((state) => state.clearMoveEffect);
   const clearRenameEffect = useFileTreeStore((state) => state.clearRenameEffect);
+  const expand = useFileTreeStore((state) => state.expand);
+  const collapse = useFileTreeStore((state) => state.collapse);
   const clearArxivSelection = useArxivStore((state) => state.setSelectedPaperKey);
   const showEye = isReading || isWriting;
   const eyeClass = isWriting ? "is-writing" : "is-reading";
-  const { readOnly } = useFileTreeDragContext();
+  const {
+    readOnly,
+    armedId,
+    setArmedId,
+    externalDragActive = false,
+    externalDropTargetId = null,
+  } = useFileTreeDragContext();
   const isDragging = node.isDragging;
+  const isDragArmed = armedId === node.data.id;
+  const isExternalDropTarget =
+    externalDragActive && externalDropTargetId === node.data.id;
   const uiMeta = node.data.uiMeta ?? null;
   const onboardingId =
     uiMeta?.emphasis === "diff"
@@ -110,6 +121,15 @@ export function FileTreeNode({
     ]
   );
 
+  const handleArmDrag = React.useCallback(
+    (e: React.PointerEvent) => {
+      if (readOnly || !setArmedId || e.button !== 0) return;
+      e.stopPropagation();
+      setArmedId(node.data.id);
+    },
+    [node.data.id, readOnly, setArmedId]
+  );
+
   const dragRef = React.useCallback(
     (element: HTMLDivElement | null) => {
       if (!dragHandle) return;
@@ -123,6 +143,15 @@ export function FileTreeNode({
   );
 
   const autoOpenTimerRef = React.useRef<number | null>(null);
+  const handleToggleFolder = React.useCallback(() => {
+    if (!isFolder) return;
+    if (node.isOpen) {
+      collapse(node.data.id);
+    } else {
+      expand(node.data.id);
+    }
+    node.toggle();
+  }, [collapse, expand, isFolder, node]);
 
   React.useEffect(() => {
     if (!isFolder) return;
@@ -132,6 +161,7 @@ export function FileTreeNode({
       }
       autoOpenTimerRef.current = window.setTimeout(() => {
         if (node.willReceiveDrop && !node.isOpen) {
+          expand(node.data.id);
           node.open();
         }
       }, 500);
@@ -148,7 +178,7 @@ export function FileTreeNode({
       autoOpenTimerRef.current = null;
     }
     return undefined;
-  }, [isFolder, node, node.isOpen, node.willReceiveDrop]);
+  }, [expand, isFolder, node, node.isOpen, node.willReceiveDrop]);
 
   return (
     <div
@@ -160,7 +190,9 @@ export function FileTreeNode({
         "file-tree-node",
         isLatexFolder && "is-latex-folder",
         node.isSelected && "is-selected",
+        isDragArmed && "is-drag-armed",
         node.willReceiveDrop && "will-receive-drop",
+        isExternalDropTarget && "is-external-drop-target",
         node.state.isFocused && "is-focused",
         isHighlighted && "is-highlighted",
         uiMeta?.emphasis === "diff" && "is-diff",
@@ -178,9 +210,19 @@ export function FileTreeNode({
         if (isRenamed) clearRenameEffect(node.data.id);
         clearArxivSelection(null);
       }}
+      onPointerUp={() => {
+        if (!node.isDragging) {
+          setArmedId?.(null);
+        }
+      }}
+      onPointerCancel={() => {
+        if (!node.isDragging) {
+          setArmedId?.(null);
+        }
+      }}
       onDoubleClick={() => {
         if (isFolder) {
-          node.toggle();
+          handleToggleFolder();
         } else {
           // Double-click on file handled by FileTree component
           // via onRowClick or custom event
@@ -191,6 +233,7 @@ export function FileTreeNode({
         <span
           className="file-tree-drag-handle"
           aria-hidden="true"
+          onPointerDown={handleArmDrag}
         >
           <GripVertical className="h-3 w-3" />
         </span>
@@ -206,7 +249,7 @@ export function FileTreeNode({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                node.toggle();
+                handleToggleFolder();
               }}
               className="p-0.5 rounded transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
             >

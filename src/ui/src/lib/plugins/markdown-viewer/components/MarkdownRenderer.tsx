@@ -19,11 +19,12 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { normalizeHeadingText, slugifyHeading } from "@/lib/docs/markdown";
 import {
+  buildQuestDocumentAssetUrl,
+  getQuestMarkdownContextFromFileId,
   type QuestMarkdownContext,
   resolveQuestMarkdownAssetUrl,
 } from "@/lib/markdown/quest-assets";
 import { cn } from "@/lib/utils";
-import { apiClient } from "@/lib/api/client";
 
 // ============================================================
 // Types
@@ -109,6 +110,14 @@ function MarkdownImage({
   );
   const safeSrc = sanitizeImageUrl(resolvedSrc);
   const fileId = parseDsFileSrc(safeSrc);
+  const internalAssetUrl = React.useMemo(() => {
+    if (!fileId) return null;
+    const context = getQuestMarkdownContextFromFileId(fileId);
+    if (context?.questId && context.baseDocumentId) {
+      return buildQuestDocumentAssetUrl(context.questId, context.baseDocumentId);
+    }
+    return `/api/v1/files/${encodeURIComponent(fileId)}/content`;
+  }, [fileId]);
   const [blobUrl, setBlobUrl] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -128,11 +137,16 @@ function MarkdownImage({
 
     (async () => {
       try {
-        const response = await apiClient.get(`/api/v1/files/${fileId}/content`, {
-          responseType: "blob",
-        });
+        if (!internalAssetUrl) {
+          throw new Error("Missing internal asset URL.");
+        }
+        const response = await fetch(internalAssetUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to load image (${response.status}).`);
+        }
+        const nextUrl = URL.createObjectURL(await response.blob());
         if (cancelled) return;
-        activeUrl = URL.createObjectURL(response.data);
+        activeUrl = nextUrl;
         setBlobUrl(activeUrl);
       } catch (err) {
         if (cancelled) return;
@@ -144,7 +158,7 @@ function MarkdownImage({
       cancelled = true;
       if (activeUrl) URL.revokeObjectURL(activeUrl);
     };
-  }, [fileId, safeSrc]);
+  }, [internalAssetUrl, fileId, safeSrc]);
 
   if (!safeSrc) {
     return (

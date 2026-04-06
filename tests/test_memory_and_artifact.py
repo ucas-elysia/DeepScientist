@@ -18,7 +18,7 @@ from deepscientist.memory import MemoryService
 from deepscientist.memory.frontmatter import dump_markdown_document, load_markdown_document
 from deepscientist.quest import QuestService
 from deepscientist.registries import BaselineRegistry
-from deepscientist.shared import read_json, read_jsonl, read_yaml, write_json, write_yaml
+from deepscientist.shared import ensure_dir, read_json, read_jsonl, read_yaml, write_json, write_yaml
 from deepscientist.skills import SkillInstaller
 
 
@@ -3804,6 +3804,128 @@ def test_markdown_asset_upload_uses_sibling_assets_folder(temp_home: Path) -> No
 
     opened = quest_service.open_document(quest["quest_id"], uploaded["asset_document_id"])
     assert opened["meta"]["renderer_hint"] == "image"
+
+
+def test_workspace_file_mutations_can_create_folder_and_upload_files(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    quest_service = QuestService(temp_home, skill_installer=SkillInstaller(repo_root(), temp_home))
+    quest = quest_service.create("workspace file mutation quest")
+
+    created_folder = quest_service.create_workspace_folder(
+        quest["quest_id"],
+        name="datasets",
+        parent_path="literature",
+    )
+    assert created_folder["ok"] is True
+    assert created_folder["item"]["kind"] == "directory"
+    assert created_folder["item"]["path"] == "literature/datasets"
+
+    uploaded = quest_service.upload_workspace_file(
+        quest["quest_id"],
+        parent_path="literature/datasets",
+        file_name="notes.txt",
+        mime_type="text/plain",
+        content=b"baseline notes\n",
+    )
+    assert uploaded["ok"] is True
+    assert uploaded["item"]["kind"] == "file"
+    assert uploaded["item"]["path"] == "literature/datasets/notes.txt"
+    assert uploaded["item"]["document_id"] == "path::literature/datasets/notes.txt"
+
+    opened = quest_service.open_document(
+        quest["quest_id"],
+        "path::literature/datasets/notes.txt",
+    )
+    assert opened["content"] == "baseline notes\n"
+
+    explorer = quest_service.explorer(quest["quest_id"])
+    research = next(section for section in explorer["sections"] if section["id"] == "research")
+
+    def flatten(nodes: list[dict]) -> list[dict]:
+        items: list[dict] = []
+        for node in nodes:
+            items.append(node)
+            items.extend(flatten(node.get("children") or []))
+        return items
+
+    research_nodes = flatten(research["nodes"])
+    assert any(node.get("path") == "literature/datasets" and node.get("kind") == "directory" for node in research_nodes)
+    assert any(node.get("path") == "literature/datasets/notes.txt" and node.get("kind") == "file" for node in research_nodes)
+
+
+def test_workspace_file_mutations_can_rename_move_and_delete_entries(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    quest_service = QuestService(temp_home, skill_installer=SkillInstaller(repo_root(), temp_home))
+    quest = quest_service.create("workspace rename move delete quest")
+    quest_root = Path(quest["quest_root"])
+
+    source_dir = quest_root / "literature" / "notes"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    source_file = source_dir / "draft.md"
+    source_file.write_text("# Draft\n", encoding="utf-8")
+
+    renamed = quest_service.rename_workspace_entry(
+        quest["quest_id"],
+        path="literature/notes/draft.md",
+        new_name="summary.md",
+    )
+    assert renamed["ok"] is True
+    assert renamed["item"]["path"] == "literature/notes/summary.md"
+    assert not source_file.exists()
+    assert (source_dir / "summary.md").exists()
+
+    moved = quest_service.move_workspace_entries(
+        quest["quest_id"],
+        paths=["literature/notes/summary.md"],
+        target_parent_path="artifacts",
+    )
+    assert moved["ok"] is True
+    assert moved["items"][0]["path"] == "artifacts/summary.md"
+    assert not (source_dir / "summary.md").exists()
+    assert (quest_root / "artifacts" / "summary.md").exists()
+
+    deleted = quest_service.delete_workspace_entries(
+        quest["quest_id"],
+        paths=["artifacts/summary.md", "literature/notes"],
+    )
+    assert deleted["ok"] is True
+    assert sorted(item["path"] for item in deleted["items"]) == [
+        "artifacts/summary.md",
+        "literature/notes",
+    ]
+    assert not (quest_root / "artifacts" / "summary.md").exists()
+    assert not source_dir.exists()
+
+
+def test_snapshot_unknown_quest_does_not_materialize_runtime_files(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    quest_service = QuestService(temp_home, skill_installer=SkillInstaller(repo_root(), temp_home))
+
+    with pytest.raises(FileNotFoundError):
+        quest_service.snapshot("046")
+
+    ghost_root = temp_home / "quests" / "046"
+    assert not ghost_root.exists()
+
+
+def test_repair_orphaned_quest_scaffold_restores_minimal_files(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    quest_service = QuestService(temp_home, skill_installer=SkillInstaller(repo_root(), temp_home))
+    quest_root = temp_home / "quests" / "046"
+    ensure_dir(quest_root / ".ds")
+
+    repaired = quest_service.repair_orphaned_quest_scaffold("046")
+
+    assert repaired["quest_id"] == "046"
+    for relative in ("quest.yaml", "brief.md", "plan.md", "status.md", "SUMMARY.md", ".gitignore"):
+        assert (quest_root / relative).exists()
+    assert (quest_root / ".git").exists()
+    listed = quest_service.list_quests()
+    assert any(item["quest_id"] == "046" for item in listed)
 
 
 def test_questpath_documents_and_stage_view_cover_quest_root_files(temp_home: Path) -> None:

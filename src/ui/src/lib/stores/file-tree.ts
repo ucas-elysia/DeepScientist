@@ -379,6 +379,48 @@ function moveNodesInTree(
   return roots;
 }
 
+function cloneFileNode(node: FileNode): FileNode {
+  return {
+    ...node,
+    children: node.children ? cloneFileTree(node.children) : node.children,
+  };
+}
+
+function insertNodeIntoTree(nodes: FileNode[], nextNode: FileNode): FileNode[] {
+  const clonedNode = cloneFileNode(nextNode);
+  let inserted = false;
+
+  const visit = (list: FileNode[]): FileNode[] =>
+    list.map((node) => {
+      if (inserted || node.id !== clonedNode.parentId || node.type !== "folder") {
+        if (!inserted && node.children) {
+          const nextChildren = visit(node.children);
+          if (nextChildren !== node.children) {
+            return { ...node, children: nextChildren };
+          }
+        }
+        return node;
+      }
+
+      inserted = true;
+      const children = [...(node.children ?? []), clonedNode];
+      sortFileNodes(children);
+      return { ...node, children };
+    });
+
+  const nextNodes = visit(nodes);
+  if (inserted) {
+    return nextNodes;
+  }
+  if (clonedNode.parentId) {
+    return nodes;
+  }
+
+  const roots = [...nodes, clonedNode];
+  sortFileNodes(roots);
+  return roots;
+}
+
 function updateNodeMetaInTree(
   nodes: FileNode[],
   id: string,
@@ -408,6 +450,7 @@ const RENAME_EFFECT_DURATION_MS = 3000;
 const readEffectTimers = new Map<string, number>();
 const moveEffectTimers = new Map<string, number>();
 const renameEffectTimers = new Map<string, number>();
+let latestLoadRequestId = 0;
 
 function normalizePath(path: string): string {
   let normalized = path.trim();
@@ -458,14 +501,21 @@ export const useFileTreeStore = create<FileTreeState & FileTreeActions>(
 
     // Load files for a project
     loadFiles: async (projectId: string, options = {}) => {
+      const requestId = ++latestLoadRequestId;
       set({ isLoading: true, error: null, projectId });
       try {
         const response = await fileApi.getFileTree(projectId, options);
+        if (requestId !== latestLoadRequestId) {
+          return;
+        }
         // Defensive: handle cases where response might not have files array
         const files = response?.files;
         const nodes = buildFileTree(files);
-        set({ nodes, isLoading: false });
+        set({ nodes, isLoading: false, error: null });
       } catch (error) {
+        if (requestId !== latestLoadRequestId) {
+          return;
+        }
         const message =
           error instanceof Error ? error.message : "Failed to load files";
         // Set empty nodes on error to prevent UI issues
@@ -773,6 +823,7 @@ export const useFileTreeStore = create<FileTreeState & FileTreeActions>(
             mimeType: response.mime_type,
             size: response.size,
             parentId: response.parent_id,
+            path: response.path,
             createdAt: response.created_at,
             updatedAt: response.updated_at,
           };
@@ -780,11 +831,23 @@ export const useFileTreeStore = create<FileTreeState & FileTreeActions>(
           set((state) => ({
             uploadTasks: state.uploadTasks.map((t) =>
               t.id === task.id
-                ? { ...t, status: "completed" as const, progress: 100, createdFile: createdNode }
+                ? {
+                    ...t,
+                    status: "completed" as const,
+                    progress: 100,
+                    createdFile: createdNode,
+                  }
                 : t
             ),
+            nodes: insertNodeIntoTree(state.nodes, createdNode),
           }));
 
+          if (parentId) {
+            get().expand(parentId);
+          }
+          get().expandToFile(createdNode.id);
+          get().markFileWrite(createdNode.id);
+          get().highlightFile(createdNode.id);
           results.push(createdNode);
         } catch (error) {
           // Update status to error

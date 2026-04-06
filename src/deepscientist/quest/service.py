@@ -5,10 +5,11 @@ from collections import deque
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 import hashlib
-import subprocess
 import json
 import mimetypes
 import re
+import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path, PurePosixPath
@@ -321,6 +322,12 @@ class QuestService:
 
     def _quest_root(self, quest_id: str) -> Path:
         return self.quests_root / quest_id
+
+    def _require_initialized_quest_root(self, quest_id: str) -> Path:
+        quest_root = self._quest_root(quest_id)
+        if not quest_root.exists() or not self._quest_yaml_path(quest_root).exists():
+            raise FileNotFoundError(f"Unknown quest `{quest_id}`.")
+        return quest_root
 
     def _normalized_binding_sources(self, sources: list[Any] | None) -> list[str]:
         local_present = False
@@ -2782,6 +2789,86 @@ class QuestService:
         self._initialize_runtime_files(quest_root)
         return self.snapshot(quest_id)
 
+    def repair_orphaned_quest_scaffold(
+        self,
+        quest_id: str,
+        *,
+        title: str | None = None,
+        goal: str | None = None,
+        runner: str = "codex",
+    ) -> dict[str, Any]:
+        quest_root = self._quest_root(quest_id)
+        if not quest_root.exists():
+            raise FileNotFoundError(f"Unknown quest `{quest_id}`.")
+        quest_yaml_path = self._quest_yaml_path(quest_root)
+        if quest_yaml_path.exists():
+            raise FileExistsError(f"Quest `{quest_id}` already has a scaffold.")
+
+        restored_goal = str(goal or f"Recovered quest {quest_id}").strip() or f"Recovered quest {quest_id}"
+        restored_title = str(title or quest_id).strip() or quest_id
+
+        for relative in QUEST_DIRECTORIES:
+            ensure_dir(quest_root / relative)
+
+        write_yaml(
+            quest_yaml_path,
+            initial_quest_yaml(
+                quest_id,
+                restored_goal,
+                quest_root,
+                runner,
+                title=restored_title,
+            ),
+        )
+        write_text(
+            quest_root / "brief.md",
+            "\n".join(
+                [
+                    "# Quest Brief",
+                    "",
+                    "## Recovery Note",
+                    "",
+                    "This quest scaffold was recreated because the core quest files were missing.",
+                    "Existing runtime traces under `.ds/` were preserved.",
+                    "",
+                    "## Goal",
+                    "",
+                    restored_goal,
+                    "",
+                ]
+            ),
+        )
+        write_text(
+            quest_root / "plan.md",
+            "\n".join(
+                [
+                    "# Plan",
+                    "",
+                    "- [ ] Inspect preserved runtime traces under `.ds/`",
+                    "- [ ] Re-establish the baseline context",
+                    "- [ ] Recreate any missing durable files or artifacts",
+                    "",
+                ]
+            ),
+        )
+        write_text(
+            quest_root / "status.md",
+            "# Status\n\nRecovered scaffold. Review preserved runtime state before continuing.\n",
+        )
+        write_text(
+            quest_root / "SUMMARY.md",
+            "# Summary\n\nRecovered quest scaffold. Original top-level quest files were missing.\n",
+        )
+        write_text(quest_root / ".gitignore", gitignore())
+        self._write_active_user_requirements(
+            quest_root,
+            latest_requirement=None,
+        )
+        if not (quest_root / ".git").exists():
+            init_repo(quest_root)
+        self._initialize_runtime_files(quest_root)
+        return self.snapshot(quest_id)
+
     def list_quests(self) -> list[dict]:
         items: list[dict] = []
         if not self.quests_root.exists():
@@ -2879,7 +2966,7 @@ class QuestService:
         )
 
     def summary_compact(self, quest_id: str) -> dict[str, Any]:
-        quest_root = self._quest_root(quest_id)
+        quest_root = self._require_initialized_quest_root(quest_id)
         cache_key = f"compact:{self._cache_key_for_path(quest_root)}"
         state = self._compact_summary_state(quest_root)
         with self._snapshot_cache_lock:
@@ -3254,7 +3341,7 @@ class QuestService:
         return self._snapshot(quest_id)
 
     def _snapshot(self, quest_id: str) -> dict:
-        quest_root = self._quest_root(quest_id)
+        quest_root = self._require_initialized_quest_root(quest_id)
         cache_key = f"snapshot:{self._cache_key_for_path(quest_root)}"
         state = self._snapshot_state(quest_root)
         with self._snapshot_cache_lock:
@@ -4308,7 +4395,7 @@ class QuestService:
             return payload
 
     def list_documents(self, quest_id: str) -> list[dict]:
-        quest_root = self._quest_root(quest_id)
+        quest_root = self._require_initialized_quest_root(quest_id)
         workspace_root = self.active_workspace_root(quest_root)
         documents = []
         for relative in ("brief.md", "plan.md", "status.md", "SUMMARY.md"):
@@ -4362,7 +4449,7 @@ class QuestService:
         if revision:
             return self._revision_explorer(quest_id, revision=revision, mode=mode or "ref")
 
-        quest_root = self._quest_root(quest_id)
+        quest_root = self._require_initialized_quest_root(quest_id)
         workspace_root = self.active_workspace_root(quest_root)
         git_status = self._git_status_map(workspace_root)
 
@@ -4391,7 +4478,7 @@ class QuestService:
     def search_files(self, quest_id: str, term: str, limit: int = 50) -> dict[str, Any]:
         query = term.strip()
         normalized_query = query.casefold()
-        workspace_root = self.active_workspace_root(self._quest_root(quest_id))
+        workspace_root = self.active_workspace_root(self._require_initialized_quest_root(quest_id))
         resolved_limit = max(1, min(limit, 200))
         if not normalized_query:
             return {
@@ -4486,7 +4573,7 @@ class QuestService:
         }
 
     def open_document(self, quest_id: str, document_id: str) -> dict:
-        quest_root = self._quest_root(quest_id)
+        quest_root = self._require_initialized_quest_root(quest_id)
         workspace_root = self.active_workspace_root(quest_root)
         if document_id.startswith("git::"):
             revision, relative = self._parse_git_document_id(document_id)
@@ -4551,7 +4638,7 @@ class QuestService:
         }
 
     def resolve_document(self, quest_id: str, document_id: str) -> tuple[Path, bool, str, str]:
-        quest_root = self._quest_root(quest_id)
+        quest_root = self._require_initialized_quest_root(quest_id)
         workspace_root = self.active_workspace_root(quest_root)
         resolution_root = self._document_resolution_root(
             quest_root=quest_root,
@@ -4741,6 +4828,291 @@ class QuestService:
             "asset_url": f"/api/quests/{quest_id}/documents/asset?document_id={quote(asset_document_id, safe='')}",
             "mime_type": mimetypes.guess_type(asset_path.name)[0] or mime_type or "application/octet-stream",
             "kind": kind,
+            "saved_at": utc_now(),
+        }
+
+    @staticmethod
+    def _normalize_workspace_relative_path(
+        relative: str | None,
+        *,
+        field_name: str,
+        allow_root: bool = True,
+    ) -> str | None:
+        if relative is None:
+            if allow_root:
+                return None
+            raise ValueError(f"`{field_name}` is required.")
+        raw = str(relative).strip().replace("\\", "/")
+        if not raw:
+            if allow_root:
+                return None
+            raise ValueError(f"`{field_name}` is required.")
+        normalized = raw.lstrip("/").rstrip("/")
+        if normalized in {"", "."}:
+            if allow_root:
+                return None
+            raise ValueError(f"`{field_name}` must point to a workspace entry.")
+        return normalized
+
+    @staticmethod
+    def _normalize_workspace_entry_name(name: str | None, *, field_name: str) -> str:
+        raw = str(name or "").strip().replace("\\", "/")
+        if not raw:
+            raise ValueError(f"`{field_name}` is required.")
+        if "/" in raw:
+            raise ValueError(f"`{field_name}` must be a single path segment.")
+        candidate = Path(raw).name
+        if candidate != raw or candidate in {"", ".", ".."}:
+            raise ValueError(f"`{field_name}` must be a valid file or folder name.")
+        if candidate == ".git":
+            raise ValueError("`.git` cannot be created or renamed from the explorer.")
+        return candidate
+
+    @staticmethod
+    def _normalize_workspace_path_list(paths: Any, *, field_name: str) -> list[str]:
+        if not isinstance(paths, list) or not paths:
+            raise ValueError(f"`{field_name}` must be a non-empty list.")
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in paths:
+            item = QuestService._normalize_workspace_relative_path(
+                raw,
+                field_name=field_name,
+                allow_root=False,
+            )
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            normalized.append(item)
+        if not normalized:
+            raise ValueError(f"`{field_name}` must include at least one valid path.")
+        return normalized
+
+    @staticmethod
+    def _filter_nested_workspace_paths(paths: list[str]) -> list[str]:
+        kept: list[str] = []
+        for path in paths:
+            if any(path == parent or path.startswith(f"{parent}/") for parent in kept):
+                continue
+            kept.append(path)
+        return kept
+
+    def _workspace_entry_payload(self, workspace_root: Path, path: Path) -> dict:
+        if path.is_dir():
+            return self._directory_node(
+                workspace_root,
+                path=path,
+                children=[],
+                git_status={},
+                changed_paths={},
+            )
+        payload = self._file_node(
+            workspace_root,
+            path=path,
+            git_status={},
+            changed_paths={},
+        )
+        if payload is None:
+            raise FileNotFoundError(f"Unknown workspace entry `{path}`.")
+        return payload
+
+    def create_workspace_folder(
+        self,
+        quest_id: str,
+        *,
+        name: str | None,
+        parent_path: str | None = None,
+    ) -> dict:
+        workspace_root = self.active_workspace_root(self._require_initialized_quest_root(quest_id))
+        normalized_parent = self._normalize_workspace_relative_path(
+            parent_path,
+            field_name="parent_path",
+            allow_root=True,
+        )
+        folder_name = self._normalize_workspace_entry_name(name, field_name="name")
+        parent = resolve_within(workspace_root, normalized_parent) if normalized_parent else workspace_root
+        if not parent.exists() or not parent.is_dir():
+            raise FileNotFoundError(
+                f"Unknown destination folder `{normalized_parent or '.'}`."
+            )
+        target = resolve_within(parent, folder_name)
+        if target.exists():
+            raise FileExistsError(
+                f"`{target.relative_to(workspace_root).as_posix()}` already exists."
+            )
+        ensure_dir(target)
+        return {
+            "ok": True,
+            "quest_id": quest_id,
+            "parent_path": normalized_parent,
+            "item": self._workspace_entry_payload(workspace_root, target),
+            "saved_at": utc_now(),
+        }
+
+    def upload_workspace_file(
+        self,
+        quest_id: str,
+        *,
+        file_name: str | None,
+        content: bytes,
+        mime_type: str | None = None,
+        parent_path: str | None = None,
+    ) -> dict:
+        workspace_root = self.active_workspace_root(self._require_initialized_quest_root(quest_id))
+        normalized_parent = self._normalize_workspace_relative_path(
+            parent_path,
+            field_name="parent_path",
+            allow_root=True,
+        )
+        safe_name = self._normalize_workspace_entry_name(file_name, field_name="file_name")
+        parent = resolve_within(workspace_root, normalized_parent) if normalized_parent else workspace_root
+        if not parent.exists() or not parent.is_dir():
+            raise FileNotFoundError(
+                f"Unknown destination folder `{normalized_parent or '.'}`."
+            )
+        target = resolve_within(parent, safe_name)
+        if target.exists():
+            raise FileExistsError(
+                f"`{target.relative_to(workspace_root).as_posix()}` already exists."
+            )
+        ensure_dir(target.parent)
+        target.write_bytes(content)
+        payload = self._workspace_entry_payload(workspace_root, target)
+        guessed_mime = mimetypes.guess_type(target.name)[0] or mime_type or "application/octet-stream"
+        payload["mime_type"] = guessed_mime
+        return {
+            "ok": True,
+            "quest_id": quest_id,
+            "parent_path": normalized_parent,
+            "item": payload,
+            "saved_at": utc_now(),
+        }
+
+    def rename_workspace_entry(
+        self,
+        quest_id: str,
+        *,
+        path: str | None,
+        new_name: str | None,
+    ) -> dict:
+        workspace_root = self.active_workspace_root(self._require_initialized_quest_root(quest_id))
+        normalized_path = self._normalize_workspace_relative_path(
+            path,
+            field_name="path",
+            allow_root=False,
+        )
+        source = resolve_within(workspace_root, normalized_path)
+        if not source.exists():
+            raise FileNotFoundError(f"Unknown workspace entry `{normalized_path}`.")
+        safe_name = self._normalize_workspace_entry_name(new_name, field_name="new_name")
+        target = resolve_within(source.parent, safe_name)
+        if target.exists() and target != source:
+            raise FileExistsError(
+                f"`{target.relative_to(workspace_root).as_posix()}` already exists."
+            )
+        if target != source:
+            source.rename(target)
+        payload = self._workspace_entry_payload(workspace_root, target)
+        return {
+            "ok": True,
+            "quest_id": quest_id,
+            "previous_path": normalized_path,
+            "item": payload,
+            "saved_at": utc_now(),
+        }
+
+    def move_workspace_entries(
+        self,
+        quest_id: str,
+        *,
+        paths: Any,
+        target_parent_path: str | None = None,
+    ) -> dict:
+        workspace_root = self.active_workspace_root(self._require_initialized_quest_root(quest_id))
+        normalized_paths = self._filter_nested_workspace_paths(
+            self._normalize_workspace_path_list(paths, field_name="paths")
+        )
+        normalized_target_parent = self._normalize_workspace_relative_path(
+            target_parent_path,
+            field_name="target_parent_path",
+            allow_root=True,
+        )
+        target_parent = (
+            resolve_within(workspace_root, normalized_target_parent)
+            if normalized_target_parent
+            else workspace_root
+        )
+        if not target_parent.exists() or not target_parent.is_dir():
+            raise FileNotFoundError(
+                f"Unknown destination folder `{normalized_target_parent or '.'}`."
+            )
+
+        moves: list[tuple[str, Path, Path]] = []
+        destination_keys: set[str] = set()
+        target_parent_resolved = target_parent.resolve()
+        for normalized_path in normalized_paths:
+            source = resolve_within(workspace_root, normalized_path)
+            if not source.exists():
+                raise FileNotFoundError(f"Unknown workspace entry `{normalized_path}`.")
+            source_resolved = source.resolve()
+            if source_resolved == target_parent_resolved or source_resolved in target_parent_resolved.parents:
+                raise ValueError(
+                    f"`{normalized_path}` cannot be moved into itself or one of its descendants."
+                )
+            destination = resolve_within(target_parent, source.name)
+            if destination.exists() and destination.resolve() != source_resolved:
+                raise FileExistsError(
+                    f"`{destination.relative_to(workspace_root).as_posix()}` already exists."
+                )
+            destination_key = str(destination.resolve())
+            if destination_key in destination_keys and destination != source:
+                raise FileExistsError(
+                    f"`{destination.relative_to(workspace_root).as_posix()}` would conflict with another moved entry."
+                )
+            destination_keys.add(destination_key)
+            moves.append((normalized_path, source, destination))
+
+        items: list[dict] = []
+        for _normalized_path, source, destination in moves:
+            if destination != source:
+                source.rename(destination)
+            items.append(self._workspace_entry_payload(workspace_root, destination))
+        return {
+            "ok": True,
+            "quest_id": quest_id,
+            "target_parent_path": normalized_target_parent,
+            "items": items,
+            "saved_at": utc_now(),
+        }
+
+    def delete_workspace_entries(
+        self,
+        quest_id: str,
+        *,
+        paths: Any,
+    ) -> dict:
+        workspace_root = self.active_workspace_root(self._require_initialized_quest_root(quest_id))
+        normalized_paths = self._filter_nested_workspace_paths(
+            self._normalize_workspace_path_list(paths, field_name="paths")
+        )
+        sources: list[Path] = []
+        items: list[dict] = []
+        for normalized_path in normalized_paths:
+            source = resolve_within(workspace_root, normalized_path)
+            if not source.exists():
+                raise FileNotFoundError(f"Unknown workspace entry `{normalized_path}`.")
+            sources.append(source)
+            items.append(self._workspace_entry_payload(workspace_root, source))
+
+        for source in sorted(sources, key=lambda item: len(item.parts), reverse=True):
+            if source.is_dir():
+                shutil.rmtree(source)
+            else:
+                source.unlink()
+        return {
+            "ok": True,
+            "quest_id": quest_id,
+            "items": items,
             "saved_at": utc_now(),
         }
 
@@ -4936,6 +5308,8 @@ class QuestService:
         }
 
     def _initialize_runtime_files(self, quest_root: Path) -> None:
+        if not self._quest_yaml_path(quest_root).exists():
+            raise FileNotFoundError(f"Unknown quest `{quest_root.name}`.")
         queue_path = self._message_queue_path(quest_root)
         if not queue_path.exists():
             write_json(queue_path, self._default_message_queue())

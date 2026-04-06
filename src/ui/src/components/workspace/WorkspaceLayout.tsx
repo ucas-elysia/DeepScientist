@@ -2279,7 +2279,7 @@ function LeftPanel({
   )
   const hasDiffExplorer = diffFiles.length > 0
   const disableExplorerActions = readOnlyMode
-  const disableExplorerMutations = readOnlyMode || localQuestMode
+  const disableExplorerMutations = readOnlyMode
   const hideDotfilesEffective = isScopeView ? true : hideDotfiles
   const explorerResetKey = [
     explorerLocation.selectionLabel || '',

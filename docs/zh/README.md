@@ -151,5 +151,5 @@ DeepScientist 灵活且易于使用，支持：
 欢迎加群讨论。
 
 <p align="center">
-  <img src="../../assets/readme/wechat.jpg" alt="DeepScientist 微信群" width="360" />
+  <img src="../../assets/readme/wechat4.jpg" alt="DeepScientist 微信群" width="360" />
 </p>

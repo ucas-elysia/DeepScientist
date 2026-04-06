@@ -113,10 +113,12 @@ export function FileTree({
 
   const {
     nodes,
+    expandedIds,
     isLoading,
     error,
     loadFiles,
     projectId: loadedProjectId,
+    expand,
     move,
     rename,
     findNode,
@@ -148,14 +150,32 @@ export function FileTree({
   }>({ open: false, node: null, loading: false });
 
   const [dragArmedId, setDragArmedId] = React.useState<string | null>(null);
-
-  const dragContextValue = React.useMemo(
-    () => ({ armedId: dragArmedId, setArmedId: setDragArmedId, readOnly }),
-    [dragArmedId, readOnly]
+  const [externalDropTargetId, setExternalDropTargetId] = React.useState<string | null>(
+    null
   );
-
+  const [externalDropTargetPath, setExternalDropTargetPath] = React.useState<
+    string | null
+  >(null);
   // Drag-over state for external file drops
   const [isDragOver, setIsDragOver] = React.useState(false);
+  const externalAutoExpandRef = React.useRef<{
+    targetId: string | null;
+    timerId: number | null;
+  }>({
+    targetId: null,
+    timerId: null,
+  });
+
+  const dragContextValue = React.useMemo(
+    () => ({
+      armedId: dragArmedId,
+      setArmedId: setDragArmedId,
+      readOnly,
+      externalDragActive: isDragOver,
+      externalDropTargetId,
+    }),
+    [dragArmedId, externalDropTargetId, isDragOver, readOnly]
+  );
 
   // Calculate container dimensions
   const [dimensions, setDimensions] = React.useState({ width: 240, height: 400 });
@@ -213,6 +233,22 @@ export function FileTree({
       setDragArmedId(null);
     }
   }, [readOnly, dragArmedId]);
+
+  const clearExternalAutoExpand = React.useCallback(() => {
+    if (externalAutoExpandRef.current.timerId != null) {
+      window.clearTimeout(externalAutoExpandRef.current.timerId);
+    }
+    externalAutoExpandRef.current = {
+      targetId: null,
+      timerId: null,
+    };
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      clearExternalAutoExpand();
+    };
+  }, [clearExternalAutoExpand]);
 
   // Reveal highlighted file (AI effect)
   React.useEffect(() => {
@@ -299,31 +335,95 @@ export function FileTree({
     []
   );
 
+  const resolveExternalDropTarget = React.useCallback(
+    (element: HTMLElement | null): { parentId: string | null; parentPath: string | null } => {
+      const nodeElement = element?.closest("[data-node-id]");
+      if (!nodeElement || !treeRef.current) {
+        return { parentId: null, parentPath: null };
+      }
+      const nodeId = nodeElement.getAttribute("data-node-id");
+      if (!nodeId) {
+        return { parentId: null, parentPath: null };
+      }
+      const node = treeRef.current.get(nodeId);
+      if (!node) {
+        return { parentId: null, parentPath: null };
+      }
+      if (node.data.type === "folder") {
+        return {
+          parentId: node.data.id,
+          parentPath: node.data.path || node.data.name || null,
+        };
+      }
+      if (!node.data.parentId) {
+        return { parentId: null, parentPath: null };
+      }
+      const parentNode = treeRef.current.get(node.data.parentId);
+      return {
+        parentId: node.data.parentId,
+        parentPath: parentNode?.data.path || parentNode?.data.name || null,
+      };
+    },
+    []
+  );
+
+  const syncExternalDropTarget = React.useCallback(
+    (target: { parentId: string | null; parentPath: string | null }) => {
+      setExternalDropTargetId((prev) =>
+        prev === target.parentId ? prev : target.parentId
+      );
+      setExternalDropTargetPath((prev) =>
+        prev === target.parentPath ? prev : target.parentPath
+      );
+
+      if (!target.parentId || !treeRef.current) {
+        clearExternalAutoExpand();
+        return;
+      }
+
+      const folderNode = treeRef.current.get(target.parentId);
+      if (!folderNode || folderNode.data.type !== "folder" || folderNode.isOpen) {
+        clearExternalAutoExpand();
+        return;
+      }
+
+      if (externalAutoExpandRef.current.targetId === target.parentId) {
+        return;
+      }
+
+      clearExternalAutoExpand();
+      const timerId = window.setTimeout(() => {
+        if (externalAutoExpandRef.current.targetId !== target.parentId) {
+          return;
+        }
+        const currentNode = treeRef.current?.get(target.parentId);
+        if (currentNode && currentNode.data.type === "folder" && !currentNode.isOpen) {
+          currentNode.open();
+          expand(target.parentId);
+        }
+      }, 320);
+      externalAutoExpandRef.current = {
+        targetId: target.parentId,
+        timerId,
+      };
+    },
+    [clearExternalAutoExpand, expand]
+  );
+
   // Handle external file drop
   const handleDrop = React.useCallback(
     async (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       setIsDragOver(false);
+      clearExternalAutoExpand();
       if (readOnly) return;
 
       const files = Array.from(e.dataTransfer.files);
       if (files.length === 0) return;
-
-      // Determine target folder
-      let targetParentId: string | null = null;
-
-      const nodeElement = (e.target as HTMLElement).closest("[data-node-id]");
-      if (nodeElement && treeRef.current) {
-        const nodeId = nodeElement.getAttribute("data-node-id");
-        if (nodeId) {
-          const node = treeRef.current.get(nodeId);
-          if (node) {
-            targetParentId =
-              node.data.type === "folder" ? node.data.id : node.data.parentId;
-          }
-        }
-      }
+      const targetParentId = externalDropTargetId;
+      setExternalDropTargetId(null);
+      setExternalDropTargetPath(null);
 
       try {
         await upload(targetParentId, files);
@@ -331,7 +431,7 @@ export function FileTree({
         console.error("Upload failed:", error);
       }
     },
-    [upload, readOnly]
+    [clearExternalAutoExpand, externalDropTargetId, readOnly, upload]
   );
 
   const findLatexFolderForFile = React.useCallback(
@@ -403,23 +503,63 @@ export function FileTree({
 
   const handleDragOver = React.useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    if (e.dataTransfer.types.includes("Files")) {
-      if (!readOnly) setIsDragOver(true);
-    }
-  }, [readOnly]);
+    if (!e.dataTransfer.types.includes("Files")) return;
+    if (readOnly) return;
+    setIsDragOver(true);
+    const pointElement =
+      typeof document !== "undefined"
+        ? (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)
+        : null;
+    syncExternalDropTarget(
+      resolveExternalDropTarget(pointElement ?? (e.target as HTMLElement))
+    );
+  }, [readOnly, resolveExternalDropTarget, syncExternalDropTarget]);
 
   const handleDragLeave = React.useCallback((e: React.DragEvent) => {
     e.preventDefault();
     // Only set to false if leaving the container entirely
     if (!containerRef.current?.contains(e.relatedTarget as Node)) {
       setIsDragOver(false);
+      setExternalDropTargetId(null);
+      setExternalDropTargetPath(null);
+      clearExternalAutoExpand();
     }
-  }, []);
+  }, [clearExternalAutoExpand]);
 
   const visibleNodes = React.useMemo(
     () => (hideDotfiles ? filterDotfiles(nodesOverride ?? nodes) : nodesOverride ?? nodes),
     [hideDotfiles, nodes, nodesOverride]
   );
+  const syncedExpandedIdsRef = React.useRef<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    if (nodesOverride) {
+      syncedExpandedIdsRef.current = new Set();
+      return;
+    }
+    const tree = treeRef.current;
+    if (!tree) return;
+
+    for (const id of syncedExpandedIdsRef.current) {
+      if (expandedIds.has(id)) continue;
+      const currentNode = tree.get(id);
+      if (currentNode?.data.type === "folder" && currentNode.isOpen) {
+        tree.close(id);
+      }
+    }
+
+    const synced = new Set<string>();
+    for (const id of expandedIds) {
+      const currentNode = tree.get(id);
+      if (currentNode?.data.type !== "folder") continue;
+      synced.add(id);
+      if (!currentNode.isOpen) {
+        tree.open(id);
+      }
+    }
+
+    syncedExpandedIdsRef.current = synced;
+  }, [expandedIds, nodesOverride, visibleNodes]);
 
   const effectiveLoading = loadingOverride ?? isLoading;
   const showLoadingState = effectiveLoading && visibleNodes.length === 0;
@@ -431,6 +571,7 @@ export function FileTree({
       className={cn(
         "file-tree h-full relative",
         isDragOver && "bg-white/[0.03] ring-1 ring-inset ring-white/15",
+        isDragOver && !externalDropTargetId && "file-tree-root-drop-active",
         className
       )}
       onDrop={handleDrop}
@@ -495,10 +636,23 @@ export function FileTree({
         <>
           {/* Drag overlay */}
           {isDragOver && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/20 z-10 pointer-events-none">
-              <div className="flex flex-col items-center text-white">
-                <Icon3D name="upload" size="lg" className="opacity-95 mb-2" />
-                <span className="text-sm font-medium">Drop files to upload</span>
+            <div className="absolute inset-0 z-10 pointer-events-none">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.10),rgba(0,0,0,0.18))]" />
+              <div className="absolute left-1/2 top-4 -translate-x-1/2">
+                <div className="flex items-center gap-2 rounded-full border border-white/18 bg-black/35 px-3 py-1.5 text-[11px] font-medium text-white shadow-[0_12px_32px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>Release to upload</span>
+                </div>
+              </div>
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2">
+                <div className="flex min-w-[220px] items-center gap-2 rounded-2xl border border-dashed border-white/22 bg-black/45 px-4 py-2 text-xs text-white shadow-[0_18px_40px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+                  <Icon3D name="folder-open" size="sm" className="opacity-95" />
+                  <span className="font-medium">
+                    {externalDropTargetPath
+                      ? `Drop into ${externalDropTargetPath}`
+                      : "Drop into workspace root"}
+                  </span>
+                </div>
               </div>
             </div>
           )}
@@ -612,8 +766,8 @@ export function FileTree({
         }
         description={
           deleteState.node
-            ? `“${deleteState.node.name}” will be moved to trash (soft delete).`
-            : "This item will be deleted."
+            ? `“${deleteState.node.name}” will be permanently deleted.`
+            : "This item will be permanently deleted."
         }
         confirmText="Delete"
         cancelText="Cancel"

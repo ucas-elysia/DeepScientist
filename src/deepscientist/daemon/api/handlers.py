@@ -523,7 +523,10 @@ npm --prefix src/ui run build</pre>
         }
 
     def quest(self, quest_id: str) -> dict:
-        return self.app.quest_service.snapshot(quest_id)
+        try:
+            return self.app.quest_service.snapshot(quest_id)
+        except FileNotFoundError:
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
 
     def quest_delete(self, quest_id: str, body: dict | None = None) -> dict | tuple[int, dict]:
         source = "web"
@@ -585,7 +588,10 @@ npm --prefix src/ui run build</pre>
         }
 
     def quest_session(self, quest_id: str) -> dict:
-        snapshot = self.app.quest_service.snapshot_fast(quest_id)
+        try:
+            snapshot = self.app.quest_service.snapshot_fast(quest_id)
+        except FileNotFoundError:
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
         for kind in ("details", "canvas", "git_canvas"):
             try:
                 self.app.quest_service.prime_projection(quest_id, kind)
@@ -1474,19 +1480,25 @@ npm --prefix src/ui run build</pre>
         )
 
     def documents(self, quest_id: str) -> list[dict]:
-        return self.app.quest_service.list_documents(quest_id)
+        try:
+            return self.app.quest_service.list_documents(quest_id)
+        except FileNotFoundError:
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
 
     def explorer(self, quest_id: str, path: str) -> dict:
         query = self.parse_query(path)
         revision = ((query.get("revision") or [""])[0] or "").strip() or None
         mode = ((query.get("mode") or [""])[0] or "").strip() or None
         profile = ((query.get("profile") or [""])[0] or "").strip() or None
-        return self.app.quest_service.explorer(
-            quest_id,
-            revision=revision,
-            mode=mode,
-            profile=profile,
-        )
+        try:
+            return self.app.quest_service.explorer(
+                quest_id,
+                revision=revision,
+                mode=mode,
+                profile=profile,
+            )
+        except FileNotFoundError:
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
 
     def quest_search(self, quest_id: str, path: str) -> dict:
         query = self.parse_query(path)
@@ -1495,7 +1507,90 @@ npm --prefix src/ui run build</pre>
             limit = int(((query.get("limit") or ["50"])[0] or "50").strip())
         except ValueError:
             limit = 50
-        return self.app.quest_service.search_files(quest_id, term=term, limit=limit)
+        try:
+            return self.app.quest_service.search_files(quest_id, term=term, limit=limit)
+        except FileNotFoundError:
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
+
+    def quest_file_create_folder(self, quest_id: str, body: dict) -> dict | tuple[int, dict]:
+        try:
+            return self._fresh_quest_service().create_workspace_folder(
+                quest_id,
+                name=body.get("name"),
+                parent_path=body.get("parent_path"),
+            )
+        except FileNotFoundError as exc:
+            return 404, {"ok": False, "message": str(exc)}
+        except FileExistsError as exc:
+            return 409, {"ok": False, "message": str(exc)}
+        except ValueError as exc:
+            return 400, {"ok": False, "message": str(exc)}
+
+    def quest_file_upload(self, quest_id: str, body: dict) -> dict | tuple[int, dict]:
+        file_name = str(body.get("file_name") or "").strip()
+        content_base64 = str(body.get("content_base64") or "").strip()
+        mime_type = str(body.get("mime_type") or "").strip() or None
+        if not file_name:
+            return 400, {"ok": False, "message": "`file_name` is required."}
+        if not content_base64:
+            return 400, {"ok": False, "message": "`content_base64` is required."}
+        try:
+            content = base64.b64decode(content_base64, validate=True)
+        except (ValueError, TypeError):
+            return 400, {"ok": False, "message": "Invalid `content_base64` payload."}
+        try:
+            return self._fresh_quest_service().upload_workspace_file(
+                quest_id,
+                file_name=file_name,
+                content=content,
+                mime_type=mime_type,
+                parent_path=body.get("parent_path"),
+            )
+        except FileNotFoundError as exc:
+            return 404, {"ok": False, "message": str(exc)}
+        except FileExistsError as exc:
+            return 409, {"ok": False, "message": str(exc)}
+        except ValueError as exc:
+            return 400, {"ok": False, "message": str(exc)}
+
+    def quest_file_rename(self, quest_id: str, body: dict) -> dict | tuple[int, dict]:
+        try:
+            return self._fresh_quest_service().rename_workspace_entry(
+                quest_id,
+                path=body.get("path"),
+                new_name=body.get("new_name"),
+            )
+        except FileNotFoundError as exc:
+            return 404, {"ok": False, "message": str(exc)}
+        except FileExistsError as exc:
+            return 409, {"ok": False, "message": str(exc)}
+        except ValueError as exc:
+            return 400, {"ok": False, "message": str(exc)}
+
+    def quest_file_move(self, quest_id: str, body: dict) -> dict | tuple[int, dict]:
+        try:
+            return self._fresh_quest_service().move_workspace_entries(
+                quest_id,
+                paths=body.get("paths"),
+                target_parent_path=body.get("target_parent_path"),
+            )
+        except FileNotFoundError as exc:
+            return 404, {"ok": False, "message": str(exc)}
+        except FileExistsError as exc:
+            return 409, {"ok": False, "message": str(exc)}
+        except ValueError as exc:
+            return 400, {"ok": False, "message": str(exc)}
+
+    def quest_file_delete(self, quest_id: str, body: dict) -> dict | tuple[int, dict]:
+        try:
+            return self._fresh_quest_service().delete_workspace_entries(
+                quest_id,
+                paths=body.get("paths"),
+            )
+        except FileNotFoundError as exc:
+            return 404, {"ok": False, "message": str(exc)}
+        except ValueError as exc:
+            return 400, {"ok": False, "message": str(exc)}
 
     def document_asset(self, quest_id: str, path: str) -> tuple[int, dict, bytes]:
         quest_service = self._fresh_quest_service()
@@ -1519,7 +1614,10 @@ npm --prefix src/ui run build</pre>
         return 200, self._asset_headers(mime_type), path.read_bytes()
 
     def document_open(self, quest_id: str, body: dict) -> dict:
-        return self._fresh_quest_service().open_document(quest_id, body["document_id"])
+        try:
+            return self._fresh_quest_service().open_document(quest_id, body["document_id"])
+        except FileNotFoundError:
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
 
     def document_asset_upload(self, quest_id: str, body: dict) -> dict:
         document_id = str(body.get("document_id") or "").strip()
@@ -1537,22 +1635,28 @@ npm --prefix src/ui run build</pre>
             content = base64.b64decode(content_base64, validate=True)
         except (ValueError, TypeError):
             return {"ok": False, "message": "Invalid `content_base64` payload."}
-        return self.app.quest_service.save_document_asset(
-            quest_id,
-            document_id,
-            file_name=file_name,
-            mime_type=mime_type or None,
-            content=content,
-            kind=kind,
-        )
+        try:
+            return self.app.quest_service.save_document_asset(
+                quest_id,
+                document_id,
+                file_name=file_name,
+                mime_type=mime_type or None,
+                content=content,
+                kind=kind,
+            )
+        except FileNotFoundError:
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
 
     def document_save(self, quest_id: str, document_id: str, body: dict) -> dict:
-        return self.app.quest_service.save_document(
-            quest_id,
-            document_id,
-            body["content"],
-            previous_revision=body.get("revision"),
-        )
+        try:
+            return self.app.quest_service.save_document(
+                quest_id,
+                document_id,
+                body["content"],
+                previous_revision=body.get("revision"),
+            )
+        except FileNotFoundError:
+            return 404, {"ok": False, "message": f"Unknown quest `{quest_id}`."}
 
     def latex_init(self, project_id: str, body: dict) -> dict:
         return self.app.latex_service.init_project(

@@ -412,5 +412,5 @@ url={https://openreview.net/forum?id=cZFgsLq8Gs}
 欢迎加入微信讨论群。
 
 <p align="center">
-  <img src="assets/readme/wechat.jpg" alt="DeepScientist WeChat group" width="360" />
+  <img src="assets/readme/wechat4.jpg" alt="DeepScientist WeChat group" width="360" />
 </p>

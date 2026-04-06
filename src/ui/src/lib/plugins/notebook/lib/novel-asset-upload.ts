@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 import { uploadFileAuto } from "@/lib/api/files";
 import { resolveApiBaseUrl } from "@/lib/api/client";
+import { getQuestNodeAssetUrl } from "@/lib/api/quest-files";
 
 const IMAGE_LIMIT_BYTES = 10 * 1024 * 1024;
 const VIDEO_LIMIT_BYTES = 100 * 1024 * 1024;
@@ -105,7 +106,5 @@ export async function uploadNotebookAsset(
   validateAsset(file, kind);
   const hiddenFile = createHiddenAssetFile(file, kind);
   const created = await uploadFileAuto(projectId, hiddenFile, null);
-  return String(
-    resolveNotebookAssetUrl(`/api/v1/files/${created.id}/content`)
-  );
+  return String(resolveNotebookAssetUrl(getQuestNodeAssetUrl(created.id)));
 }

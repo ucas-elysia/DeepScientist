@@ -2330,6 +2330,141 @@ def test_daemon_http_arxiv_import_route_passes_json_body(
         assert not server_thread.is_alive()
 
 
+def test_daemon_http_quest_file_mutation_routes(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home, browser_auth_enabled=False)
+    app._start_background_connectors = lambda: None  # type: ignore[method-assign]
+    app._stop_background_connectors = lambda: None  # type: ignore[method-assign]
+    app._start_terminal_attach_server = lambda host, port: None  # type: ignore[method-assign]
+    app._stop_terminal_attach_server = lambda: None  # type: ignore[method-assign]
+
+    quest = app.quest_service.create("http quest file mutations")
+    quest_id = quest["quest_id"]
+
+    port = _pick_free_port()
+    server_thread = threading.Thread(target=app.serve, args=("127.0.0.1", port), daemon=True)
+    server_thread.start()
+    try:
+        _wait_for_json(f"http://127.0.0.1:{port}/api/health")
+
+        create_folder_request = Request(
+            f"http://127.0.0.1:{port}/api/quests/{quest_id}/files/folder",
+            data=json.dumps({"name": "uploads", "parent_path": "literature"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(create_folder_request) as response:  # noqa: S310
+            created_folder = json.loads(response.read().decode("utf-8"))
+        assert created_folder["ok"] is True
+        assert created_folder["item"]["path"] == "literature/uploads"
+
+        upload_request = Request(
+            f"http://127.0.0.1:{port}/api/quests/{quest_id}/files/upload",
+            data=json.dumps(
+                {
+                    "file_name": "notes.txt",
+                    "parent_path": "literature/uploads",
+                    "mime_type": "text/plain",
+                    "content_base64": base64.b64encode(b"http upload\n").decode("ascii"),
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(upload_request) as response:  # noqa: S310
+            uploaded = json.loads(response.read().decode("utf-8"))
+        assert uploaded["ok"] is True
+        assert uploaded["item"]["document_id"] == "path::literature/uploads/notes.txt"
+
+        rename_request = Request(
+            f"http://127.0.0.1:{port}/api/quests/{quest_id}/files/rename",
+            data=json.dumps(
+                {
+                    "path": "literature/uploads/notes.txt",
+                    "new_name": "renamed.md",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(rename_request) as response:  # noqa: S310
+            renamed = json.loads(response.read().decode("utf-8"))
+        assert renamed["ok"] is True
+        assert renamed["item"]["path"] == "literature/uploads/renamed.md"
+
+        move_request = Request(
+            f"http://127.0.0.1:{port}/api/quests/{quest_id}/files/move",
+            data=json.dumps(
+                {
+                    "paths": ["literature/uploads/renamed.md"],
+                    "target_parent_path": "artifacts",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(move_request) as response:  # noqa: S310
+            moved = json.loads(response.read().decode("utf-8"))
+        assert moved["ok"] is True
+        assert moved["items"][0]["path"] == "artifacts/renamed.md"
+
+        delete_request = Request(
+            f"http://127.0.0.1:{port}/api/quests/{quest_id}/files/delete",
+            data=json.dumps({"paths": ["artifacts/renamed.md", "literature/uploads"]}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(delete_request) as response:  # noqa: S310
+            deleted = json.loads(response.read().decode("utf-8"))
+        assert deleted["ok"] is True
+        assert sorted(item["path"] for item in deleted["items"]) == [
+            "artifacts/renamed.md",
+            "literature/uploads",
+        ]
+
+        explorer = _get_json(f"http://127.0.0.1:{port}/api/quests/{quest_id}/explorer")
+
+        def flatten(nodes):  # noqa: ANN001
+            items = []
+            for node in nodes:
+                items.append(node)
+                items.extend(flatten(node.get("children") or []))
+            return items
+
+        flattened = []
+        for section in explorer["sections"]:
+            flattened.extend(flatten(section["nodes"]))
+        paths = {item.get("path") for item in flattened}
+        assert "artifacts/renamed.md" not in paths
+        assert "literature/uploads" not in paths
+    finally:
+        app.request_shutdown(source="test-daemon-http-quest-file-mutations")
+        server_thread.join(timeout=10)
+        assert not server_thread.is_alive()
+
+
+def test_handlers_unknown_quest_routes_return_404_without_materializing_dirs(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+
+    quest_payload = app.handlers.quest("046")
+    assert isinstance(quest_payload, tuple)
+    assert quest_payload[0] == 404
+
+    session_payload = app.handlers.quest_session("046")
+    assert isinstance(session_payload, tuple)
+    assert session_payload[0] == 404
+
+    explorer_payload = app.handlers.explorer("046", "/api/quests/046/explorer")
+    assert isinstance(explorer_payload, tuple)
+    assert explorer_payload[0] == 404
+
+    ghost_root = temp_home / "quests" / "046"
+    assert not ghost_root.exists()
+
+
 def test_handlers_annotations_roundtrip_for_quest_file(temp_home: Path) -> None:
     ensure_home_layout(temp_home)
     ConfigManager(temp_home).ensure_files()

@@ -16,15 +16,23 @@ import {
   isDemoFileId,
 } from "@/demo/adapter";
 import {
+  buildQuestFileIdFromDocument,
+  createQuestFolder,
+  deleteQuestNodes,
   getQuestFile,
   getQuestFileBlob,
   getQuestFileContent,
   getQuestFileTextPreview,
   getQuestFileTree,
+  getQuestNodeAssetUrl,
   isQuestNodeId,
   listQuestFiles,
+  moveQuestNodes,
+  renameQuestNode,
+  uploadQuestFile,
   updateQuestFileContent,
 } from "@/lib/api/quest-files";
+import { client as questClient } from "@/lib/api";
 import type {
   FileAPIResponse,
   FileTreeResponse,
@@ -89,26 +97,26 @@ export async function searchFiles(
   projectId: string,
   params: FileSearchParams
 ): Promise<FileSearchResponse> {
-  const query = new URLSearchParams();
-  query.append("pattern", params.pattern);
-  if (params.dir_path) query.append("dir_path", params.dir_path);
-  if (params.include) query.append("include", params.include);
-  if (params.include_hidden !== undefined) {
-    query.append("include_hidden", String(params.include_hidden));
-  }
-  if (params.include_folders !== undefined) {
-    query.append("include_folders", String(params.include_folders));
-  }
-  if (params.sort_by) query.append("sort_by", params.sort_by);
-  if (params.sort_order) query.append("sort_order", params.sort_order);
-  if (params.limit) query.append("limit", String(params.limit));
-  if (params.case_sensitive !== undefined) {
-    query.append("case_sensitive", String(params.case_sensitive));
-  }
-
-  const url = `${FILES_BASE}/${projectId}/search?${query.toString()}`;
-  const response = await apiClient.get<FileSearchResponse>(url);
-  return response.data;
+  const payload = await questClient.search(projectId, params.pattern, params.limit ?? 50);
+  const normalizedDir = params.dir_path?.trim().replace(/^\/+/, "").replace(/\/+$/, "") || "";
+  const items = payload.items
+    .filter((item) =>
+      normalizedDir ? item.path === normalizedDir || item.path.startsWith(`${normalizedDir}/`) : true
+    )
+    .map((item) => ({
+      id: buildQuestFileIdFromDocument(projectId, item.document_id, item.path),
+      path: item.path,
+      name: item.title,
+      type: "file" as const,
+      size: undefined,
+      mime_type: item.mime_type,
+      updated_at: undefined,
+    }));
+  return {
+    items,
+    total: items.length,
+    truncated: payload.truncated,
+  };
 }
 
 /**
@@ -185,11 +193,7 @@ export async function createFolder(
   projectId: string,
   data: CreateFolderRequest
 ): Promise<FileAPIResponse> {
-  const response = await apiClient.post<FileAPIResponse>(
-    `${FILES_BASE}/${projectId}/folder`,
-    data
-  );
-  return response.data;
+  return await createQuestFolder(projectId, data.name, data.parent_id);
 }
 
 /**
@@ -201,28 +205,7 @@ export async function uploadFile(
   parentId?: string | null,
   onProgress?: (progress: number) => void
 ): Promise<FileAPIResponse> {
-  const formData = new FormData();
-  formData.append("file", file);
-
-  const response = await apiClient.post<FileAPIResponse>(
-    `${FILES_BASE}/${projectId}/upload`,
-    formData,
-    {
-      params: parentId ? { parent_id: parentId } : undefined,
-      headers: {
-        "Content-Type": undefined, // Let axios set multipart/form-data with boundary automatically
-      },
-      onUploadProgress: (progressEvent) => {
-        if (onProgress && progressEvent.total) {
-          const progress = Math.round(
-            (progressEvent.loaded * 100) / progressEvent.total
-          );
-          onProgress(progress);
-        }
-      },
-    }
-  );
-  return response.data;
+  return await uploadQuestFile(projectId, file, parentId, onProgress);
 }
 
 /**
@@ -294,6 +277,9 @@ export async function renameFile(
   fileId: string,
   newName: string
 ): Promise<FileAPIResponse> {
+  if (isQuestNodeId(fileId)) {
+    return await renameQuestNode(fileId, newName);
+  }
   const data: RenameRequest = { name: newName };
   const response = await apiClient.patch<FileAPIResponse>(
     `${FILES_BASE}/${fileId}/rename`,
@@ -309,6 +295,10 @@ export async function moveFiles(
   fileIds: string[],
   targetParentId: string | null
 ): Promise<void> {
+  if (fileIds.length > 0 && isQuestNodeId(fileIds[0])) {
+    await moveQuestNodes(fileIds, targetParentId);
+    return;
+  }
   const data: MoveRequest = {
     file_ids: fileIds,
     target_parent_id: targetParentId,
@@ -323,6 +313,10 @@ export async function deleteFiles(
   fileIds: string[],
   permanent: boolean = false
 ): Promise<void> {
+  if (fileIds.length > 0 && isQuestNodeId(fileIds[0])) {
+    await deleteQuestNodes(fileIds);
+    return;
+  }
   const data: DeleteRequest = {
     file_ids: fileIds,
     permanent,
@@ -455,6 +449,21 @@ export async function getFileBlob(
   return response.data as Blob;
 }
 
+export function resolveFileContentUrl(
+  fileId: string,
+  options: FileContentOptions = {}
+): string {
+  if (isQuestNodeId(fileId)) {
+    return getQuestNodeAssetUrl(fileId);
+  }
+  const params = new URLSearchParams();
+  if (options.download) {
+    params.set("download", "true");
+  }
+  const suffix = params.toString();
+  return `${FILES_BASE}/${fileId}/content${suffix ? `?${suffix}` : ""}`;
+}
+
 /**
  * Create an object URL for a file (caller should revoke when done)
  */
@@ -512,74 +521,5 @@ export async function uploadFileAuto(
   parentId?: string | null,
   onProgress?: (progress: number) => void
 ): Promise<FileAPIResponse> {
-  const CHUNK_THRESHOLD = 5 * 1024 * 1024; // 5MB
-
-  if (file.size < CHUNK_THRESHOLD) {
-    // Small file: direct upload
-    return uploadFile(projectId, file, parentId, onProgress);
-  }
-
-  // Large file: multipart upload
-  const { taskId, uploadUrls, chunkSize } = await initMultipartUpload(
-    projectId,
-    file.name,
-    file.size,
-    file.type || "application/octet-stream",
-    parentId
-  );
-
-  const totalChunks = uploadUrls.length;
-  const parts: UploadPart[] = [];
-  let uploadedChunks = 0;
-
-  // Upload chunks in parallel (max 3 concurrent)
-  const uploadChunk = async (
-    partNumber: number,
-    url: string
-  ): Promise<UploadPart> => {
-    const index = partNumber - 1; // partNumber is 1-indexed
-    const start = index * chunkSize;
-    const end = Math.min(start + chunkSize, file.size);
-    const chunk = file.slice(start, end);
-
-    const response = await fetch(url, {
-      method: "PUT",
-      body: chunk,
-      headers: {
-        "Content-Type": file.type || "application/octet-stream",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to upload chunk ${partNumber}`);
-    }
-
-    const etag = response.headers.get("ETag") || `"${partNumber}"`;
-    uploadedChunks++;
-
-    if (onProgress) {
-      onProgress(Math.round((uploadedChunks / totalChunks) * 100));
-    }
-
-    return { partNumber, etag };
-  };
-
-  // Process chunks with concurrency limit
-  const CONCURRENCY = 3;
-  const results: UploadPart[] = [];
-
-  for (let i = 0; i < uploadUrls.length; i += CONCURRENCY) {
-    const batch = uploadUrls.slice(i, i + CONCURRENCY).map((urlInfo) =>
-      uploadChunk(urlInfo.partNumber, urlInfo.url)
-    );
-    const batchResults = await Promise.all(batch);
-    results.push(...batchResults);
-  }
-
-  // Sort results by partNumber
-  results.sort((a, b) => a.partNumber - b.partNumber);
-  parts.push(...results);
-
-  // Complete upload
-  return completeMultipartUpload(taskId, parts);
+  return await uploadFile(projectId, file, parentId, onProgress);
 }

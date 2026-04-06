@@ -7632,7 +7632,7 @@ class DaemonApp:
                         payload = result(**params, path=self.path)
                     elif method == "GET":
                         payload = result(**params) if params else result()
-                    elif route_name in {"document_open", "document_asset_upload", "chat", "command", "quest_control", "config_save", "quest_create", "quest_baseline_binding", "run_create", "qq_inbound", "connector_inbound", "docs_open", "admin_shutdown", "bash_stop", "quest_settings", "quest_bindings", "quest_delete", "quest_layout_update", "terminal_session_ensure", "terminal_attach", "terminal_input", "stage_view", "latex_init", "latex_compile", "system_update_action", "weixin_login_qr_start", "weixin_login_qr_wait", "arxiv_import", "annotation_create", "auth_login", "auth_rotate"}:
+                    elif route_name in {"document_open", "document_asset_upload", "quest_file_create_folder", "quest_file_upload", "quest_file_rename", "quest_file_move", "quest_file_delete", "chat", "command", "quest_control", "config_save", "quest_create", "quest_baseline_binding", "run_create", "qq_inbound", "connector_inbound", "docs_open", "admin_shutdown", "bash_stop", "quest_settings", "quest_bindings", "quest_delete", "quest_layout_update", "terminal_session_ensure", "terminal_attach", "terminal_input", "stage_view", "latex_init", "latex_compile", "system_update_action", "weixin_login_qr_start", "weixin_login_qr_wait", "arxiv_import", "annotation_create", "auth_login", "auth_rotate"}:
                         payload = result(**params, body=body)
                     elif route_name == "config_validate":
                         payload = result(body)

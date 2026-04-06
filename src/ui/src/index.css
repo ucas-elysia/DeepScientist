@@ -2198,8 +2198,38 @@
   opacity: 0.35;
 }
 
+.file-tree-root-drop-active::after {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border-radius: 18px;
+  border: 1px dashed rgba(255, 255, 255, 0.22);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+    0 20px 45px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+
 .file-tree-node.will-receive-drop {
   box-shadow: 0 0 0 2px var(--file-tree-focus-ring) inset;
+}
+
+.file-tree-node.is-external-drop-target::before,
+.file-tree-node.is-external-drop-target::after {
+  opacity: 1;
+}
+
+.file-tree-node.is-external-drop-target::before {
+  background: rgba(151, 182, 201, 0.18);
+  box-shadow: 0 0 0 1px rgba(151, 182, 201, 0.16) inset;
+}
+
+.file-tree-node.is-external-drop-target::after {
+  inset: 1px;
+  border: 1px dashed rgba(196, 224, 238, 0.86);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08) inset,
+    0 10px 22px rgba(26, 42, 56, 0.18);
 }
 
 .file-tree-node .file-tree-name {
