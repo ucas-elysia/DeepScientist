@@ -407,9 +407,10 @@ Welcome to join the WeChat group for discussion.
 
 If you like DeepScientist, you may also want to explore the rest of the ResearAI ecosystem:
 
-| Project | What it does |
-|---|---|
-| [AutoFigure](https://github.com/ResearAI/AutoFigure) | generate publication-ready figures |
-| [AutoFigure-Edit](https://github.com/ResearAI/AutoFigure-Edit) | generate editable vector paper figures |
-| [DeepReviewer-v2](https://github.com/ResearAI/DeepReviewer-v2) | review papers and suggest revisions |
-| [Awesome-AI-Scientist](https://github.com/ResearAI/Awesome-AI-Scientist) | curated AI scientist landscape |
+| Project | What it does | Stars |
+|---|---|---|
+| **[MeOS](https://github.com/ResearAI/MeOS)** | Fork yourself as a Skill, so agents understand you better | ![GitHub stars](https://img.shields.io/github/stars/ResearAI/MeOS?style=flat&logo=github) |
+| [AutoFigure](https://github.com/ResearAI/AutoFigure) | generate publication-ready figures | ![GitHub stars](https://img.shields.io/github/stars/ResearAI/AutoFigure?style=flat&logo=github) |
+| [AutoFigure-Edit](https://github.com/ResearAI/AutoFigure-Edit) | generate editable vector paper figures | ![GitHub stars](https://img.shields.io/github/stars/ResearAI/AutoFigure-Edit?style=flat&logo=github) |
+| [DeepReviewer-v2](https://github.com/ResearAI/DeepReviewer-v2) | review papers and suggest revisions | ![GitHub stars](https://img.shields.io/github/stars/ResearAI/DeepReviewer-v2?style=flat&logo=github) |
+| [Awesome-AI-Scientist](https://github.com/ResearAI/Awesome-AI-Scientist) | curated AI scientist landscape | ![GitHub stars](https://img.shields.io/github/stars/ResearAI/Awesome-AI-Scientist?style=flat&logo=github) |

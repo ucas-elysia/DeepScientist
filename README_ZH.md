@@ -363,12 +363,13 @@ ds --auth true
 
 如果你喜欢 DeepScientist，也可以一起看看 ResearAI 的其他项目：
 
-| 项目 | 说明 |
-|---|---|
-| [AutoFigure](https://github.com/ResearAI/AutoFigure) | 生成论文级图表 |
-| [AutoFigure-Edit](https://github.com/ResearAI/AutoFigure-Edit) | 生成可编辑矢量论文图 |
-| [DeepReviewer-v2](https://github.com/ResearAI/DeepReviewer-v2) | 论文审稿与修改建议 |
-| [Awesome-AI-Scientist](https://github.com/ResearAI/Awesome-AI-Scientist) | AI Scientist 项目导航 |
+| 项目 | 说明 | Stars |
+|---|---|---|
+| **[MeOS](https://github.com/ResearAI/MeOS)** | 把你自己 Fork 成一个 Skill，让 agent 更懂你 | ![GitHub stars](https://img.shields.io/github/stars/ResearAI/MeOS?style=flat&logo=github) |
+| [AutoFigure](https://github.com/ResearAI/AutoFigure) | 生成论文级图表 | ![GitHub stars](https://img.shields.io/github/stars/ResearAI/AutoFigure?style=flat&logo=github) |
+| [AutoFigure-Edit](https://github.com/ResearAI/AutoFigure-Edit) | 生成可编辑矢量论文图 | ![GitHub stars](https://img.shields.io/github/stars/ResearAI/AutoFigure-Edit?style=flat&logo=github) |
+| [DeepReviewer-v2](https://github.com/ResearAI/DeepReviewer-v2) | 论文审稿与修改建议 | ![GitHub stars](https://img.shields.io/github/stars/ResearAI/DeepReviewer-v2?style=flat&logo=github) |
+| [Awesome-AI-Scientist](https://github.com/ResearAI/Awesome-AI-Scientist) | AI Scientist 项目导航 | ![GitHub stars](https://img.shields.io/github/stars/ResearAI/Awesome-AI-Scientist?style=flat&logo=github) |
 
 ## NLPCC 2026 AISB Challenge
 
