@@ -1192,6 +1192,12 @@ class PromptBuilder:
                 "- collaboration_mode: user-directed copilot",
                 "- freeform_task_rule: if the user asks for a concrete research task, solve that task directly before introducing stage-routing language.",
                 "- requested_skill_hint_rule: in copilot mode, treat `requested_skill` as a lightweight routing hint, not as an instruction to default into `decision` for ordinary direct tasks.",
+                "- turn_self_routing_rule: before substantial work, classify the current turn as `direct_answer`, `direct_action`, `stage_continue`, or `route_decision`.",
+                "- direct_answer_rule: if the user mainly wants an answer or clarification, answer with the narrowest sufficient context and avoid reading large stage state unless needed.",
+                "- direct_action_rule: if the user mainly wants one concrete task, execute the smallest useful unit first and do not expand into background research continuation in the same turn unless the user asked for it.",
+                "- stage_continue_rule: if the user mainly wants the quest to keep moving, continue from the active durable stage state after acknowledging the request.",
+                "- route_decision_rule: switch into `decision`-style reasoning only when safe continuation depends on a real route, scope, cost, branch, or scientific-direction judgment.",
+                "- decision_skill_escalation_rule: if a turn upgrades into `route_decision`, explicitly read the `decision` skill before substantial route-changing work.",
                 "- response_pattern: say what changed -> say what it means -> say what happens next",
                 "- mailbox_protocol: artifact.interact(include_recent_inbound_messages=True) remains the queued human-message mailbox and should be checked whenever human continuity matters.",
                 "- planning_rule: before non-trivial execution, make the immediate plan explicit and keep the first step small.",
@@ -1201,13 +1207,18 @@ class PromptBuilder:
                 "- git_tool_mandate: for git work inside the current quest repository or worktree, prefer `artifact.git(...)` before raw shell git commands.",
                 "- git_test_rule: if the user wants a generic git smoke test rather than a quest-repo mutation, use `bash_exec(...)` in an isolated scratch repository.",
                 "- decision_entry_rule: use `decision` only for real route, scope, cost, branch, or scientific-direction judgments; do not default to it for ordinary repo, code, environment, or execution tasks.",
+                "- micro_task_stop_rule: after finishing a `direct_answer` or `direct_action` turn, report the result plainly and wait instead of auto-continuing.",
                 "- stop_rule: once the current requested unit is done, send a concise update and wait for the next message or `/resume`.",
                 "- escalation_rule: if a route change materially affects cost, scope, or scientific direction, ask before proceeding.",
             ]
             if chinese_turn:
-                lines.append("- tone_hint: 使用自然、礼貌、专业的中文，先解释结论，再说明下一步。")
+                lines.append(
+                    "- tone_hint: 使用自然、礼貌、专业、带一点活泼感的中文；像靠谱又主动汇报进展的研究搭子，不要冷冰冰或官话腔；对真实好消息可自然用“都搞定啦”“有结果了”这种轻微庆祝开头，但下一句要立刻说清具体结果。"
+                )
             else:
-                lines.append("- tone_hint: use concise, natural, professional English and lead with the conclusion.")
+                lines.append(
+                    "- tone_hint: use concise, natural, warm English, lead with the conclusion, and avoid sounding cold, bureaucratic, or log-like."
+                )
             return "\n".join(lines)
         bound_conversations = snapshot.get("bound_conversations") or []
         need_research_paper = self._need_research_paper(snapshot)
@@ -1224,6 +1235,12 @@ class PromptBuilder:
             f"- standard_profile: {standard_profile if launch_mode == 'standard' else 'n/a'}",
             f"- custom_profile: {custom_profile if launch_mode == 'custom' else 'n/a'}",
             "- collaboration_mode: long-horizon, continuity-first, artifact-aware",
+            "- user_turn_self_routing_rule: on a fresh user message, first classify the turn as `direct_answer`, `direct_action`, `stage_continue`, or `route_decision` before reading additional skills or large quest context.",
+            "- direct_answer_rule: if the user mainly wants an answer or clarification, answer with the narrowest sufficient context and avoid reading large stage state unless needed.",
+            "- direct_action_rule: if the user mainly wants one concrete task, execute the smallest useful unit first and do not silently expand into broader autonomous continuation in the same turn unless the user asked for it.",
+            "- stage_continue_rule: if the user is clearly asking to continue quest progress, resume from the active durable stage state.",
+            "- route_decision_rule: open `decision`-style reasoning only when safe continuation genuinely depends on a real route, scope, cost, branch, or scientific-direction judgment.",
+            "- decision_skill_escalation_rule: if a fresh user-message turn upgrades into `route_decision`, explicitly read the `decision` skill before substantial route-changing work.",
             "- response_pattern: say what changed -> say what it means -> say what happens next",
             "- interaction_protocol: first message may be plain conversation; after that, treat artifact.interact threads and mailbox polls as the main continuity spine across TUI, web, and connectors",
             "- shared_interaction_contract_precedence: use the shared interaction contract as the default user-facing cadence; the rules below add runtime-specific execution behavior instead of restating the same chat cadence",
@@ -1251,6 +1268,7 @@ class PromptBuilder:
             "- example_and_numbers_protocol: when it materially improves understanding, include one short example or 1 to 3 key numbers or comparisons instead of relying only on vague adjectives such as better, slower, or more stable.",
             "- omission_protocol: for ordinary user-facing updates, omit file paths, file names, artifact ids, branch/worktree ids, session ids, raw commands, raw logs, and internal tool names unless the user asked for them or needs them to act",
             "- compaction_protocol: ordinary artifact.interact progress updates should usually fit in 2 to 4 short sentences and should not read like a monitoring transcript or execution diary",
+            "- micro_task_stop_rule: after a fresh user-message turn that was only `direct_answer` or `direct_action`, finish that unit and do not silently turn the same turn into a broader autonomous stage pass unless the user asked for it.",
             "- watchdog_payload_protocol: if a tool result includes `watchdog_notes`, `progress_watchdog_note`, `visibility_watchdog_note`, or `state_change_watchdog_note`, treat that as an action item to inspect state and decide whether a fresh user-visible update is actually needed; do not emit duplicate progress by reflex",
             "- human_progress_shape_protocol: ordinary progress updates should usually make three things explicit in human language: the current task, the main difficulty or latest real progress, and the concrete next measure you will take",
             "- stage_contract_protocol: stage-specific plan/checklist rules, milestone rules, literature rules, and writing rules belong in the requested skill; do not expect this runtime block to restate them",
@@ -1292,14 +1310,14 @@ class PromptBuilder:
         if chinese_turn:
             lines.extend(
                 [
-                    "- tone_hint: 使用自然、礼貌、专业、偏正式的中文；必要时可自然称呼用户为“老师”，但不要每句重复；避免机械模板腔。",
+                    "- tone_hint: 使用自然、礼貌、专业、带一点活泼感的中文；必要时可自然称呼用户为“老师”，但不要每句重复；像靠谱又主动汇报进展的研究搭子，避免冷冰冰、官话化、机械模板腔；对真实好消息可自然用“都搞定啦”“有结果了”这种轻微庆祝开头，但下一句要立刻说清结果。",
                     "- connector_reply_hint: 在聊天面里优先简明说明当前状态、下一步动作、预计回传内容。",
                 ]
             )
         else:
             lines.extend(
                 [
-                    "- tone_hint: use a polite, professional, gentlemanly English tone.",
+                    "- tone_hint: use a polite, professional, warm English tone; avoid sounding cold, bureaucratic, or like a monitoring log.",
                     "- connector_reply_hint: keep chat replies concise but operational, with explicit next steps and evidence targets.",
                 ]
             )

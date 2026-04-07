@@ -3125,6 +3125,18 @@ class DaemonApp:
         return skill
 
     @staticmethod
+    def _direct_user_turn_skill(snapshot: dict) -> str:
+        available_stage_skills = current_standard_skills(repo_root())
+        for candidate in (
+            str(snapshot.get("active_anchor") or "").strip(),
+            str(snapshot.get("continuation_anchor") or "").strip(),
+        ):
+            if candidate in available_stage_skills and candidate != "decision":
+                return DaemonApp._turn_skill_stage_gate(snapshot, candidate)
+        fallback = "baseline" if "baseline" in available_stage_skills else "scout"
+        return DaemonApp._turn_skill_stage_gate(snapshot, fallback)
+
+    @staticmethod
     def _turn_skill_for(
         snapshot: dict,
         latest_user_message: dict | None,
@@ -3134,16 +3146,6 @@ class DaemonApp:
     ) -> str:
         available_stage_skills = current_standard_skills(repo_root())
         workspace_mode = DaemonApp._workspace_mode_for(snapshot)
-
-        def copilot_default_skill() -> str:
-            active_anchor = str(snapshot.get("active_anchor") or "").strip()
-            if active_anchor in available_stage_skills and active_anchor != "decision":
-                return DaemonApp._turn_skill_stage_gate(snapshot, active_anchor)
-            continuation_anchor = str(snapshot.get("continuation_anchor") or "").strip()
-            if continuation_anchor in available_stage_skills and continuation_anchor != "decision":
-                return DaemonApp._turn_skill_stage_gate(snapshot, continuation_anchor)
-            fallback = "baseline" if "baseline" in available_stage_skills else "scout"
-            return DaemonApp._turn_skill_stage_gate(snapshot, fallback)
 
         reply_target = str((latest_user_message or {}).get("reply_to_interaction_id") or "").strip()
         if reply_target:
@@ -3171,8 +3173,8 @@ class DaemonApp:
                 ):
                     return "decision"
                 if str(item.get("reply_mode") or "") == "threaded":
-                    if workspace_mode == "copilot":
-                        return copilot_default_skill()
+                    if workspace_mode == "copilot" or turn_mode in {"answering", "command_execution"}:
+                        return DaemonApp._direct_user_turn_skill(snapshot)
                     return DaemonApp._turn_skill_stage_gate(
                         snapshot,
                         DaemonApp._continuation_anchor_for(snapshot),
@@ -3180,9 +3182,9 @@ class DaemonApp:
         if turn_mode == "recovering":
             return "decision"
         if workspace_mode == "copilot" and latest_user_message is not None:
-            return copilot_default_skill()
+            return DaemonApp._direct_user_turn_skill(snapshot)
         if turn_mode in {"answering", "command_execution"}:
-            return "decision"
+            return DaemonApp._direct_user_turn_skill(snapshot)
         if str(turn_reason or "").strip() == "auto_continue" or latest_user_message is None:
             return DaemonApp._turn_skill_stage_gate(
                 snapshot,

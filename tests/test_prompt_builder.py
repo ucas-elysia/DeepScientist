@@ -116,6 +116,23 @@ def test_prompt_builder_stays_compact_and_avoids_redundant_stage_sop(temp_home: 
     assert "problem-first vs solution-first" not in prompt
 
 
+def test_prompt_builder_promotes_style_first_language_near_the_top(temp_home: Path) -> None:
+    builder, snapshot = _make_builder(temp_home)
+    prompt = builder.build(
+        quest_id=snapshot["quest_id"],
+        skill_id="baseline",
+        user_message="先看一下现在的情况。",
+        model="gpt-5.4",
+    )
+
+    top_block = "\n".join(prompt.splitlines()[:40])
+    assert "Lead with the user-facing conclusion" in top_block
+    assert "都搞定啦！" in top_block
+    assert "Write like a short report to the project owner" in top_block
+    assert "路线切换" in top_block
+    assert "Make the user payoff explicit" in top_block
+
+
 def test_prompt_builder_repairs_drifted_quest_prompt_copy_and_keeps_backup(temp_home: Path) -> None:
     builder, snapshot = _make_builder(temp_home)
     quest_root = Path(snapshot["quest_root"])
@@ -220,9 +237,13 @@ def test_prompt_builder_uses_copilot_system_prompt_for_copilot_workspace(temp_ho
     assert "request-scoped help" in prompt
     assert "freeform_task_rule" in prompt
     assert "requested_skill_hint_rule" in prompt
+    assert "turn_self_routing_rule" in prompt
+    assert "route_decision_rule" in prompt
+    assert "decision_skill_escalation_rule" in prompt
     assert "shell_tool_mandate" in prompt
     assert "git_tool_mandate" in prompt
     assert "decision_entry_rule" in prompt
+    assert "micro_task_stop_rule" in prompt
     assert "stop_rule: once the current requested unit is done" in prompt
     assert "user-directed copilot" in prompt
 
@@ -903,6 +924,10 @@ def test_prompt_builder_mentions_autonomous_decision_mode(temp_home: Path) -> No
     )
 
     assert "decision_policy: autonomous" in prompt
+    assert "user_turn_self_routing_rule" in prompt
+    assert "route_decision_rule" in prompt
+    assert "decision_skill_escalation_rule" in prompt
+    assert "micro_task_stop_rule" in prompt
     assert "do not emit `artifact.interact(kind='decision_request', ...)` for routine branching" in prompt
     assert "explicit quest-completion approval is still allowed" in prompt
 

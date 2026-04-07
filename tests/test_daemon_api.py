@@ -602,6 +602,133 @@ def test_turn_skill_for_copilot_direct_command_does_not_default_to_decision() ->
     )
 
 
+def test_turn_skill_for_autonomous_direct_question_uses_stage_skill_by_default() -> None:
+    snapshot = {
+        "active_anchor": "baseline",
+        "continuation_anchor": "decision",
+        "baseline_gate": "pending",
+        "startup_contract": {},
+    }
+    latest_user_message = {
+        "role": "user",
+        "content": "你是谁？",
+        "source": "web-react",
+    }
+
+    assert (
+        DaemonApp._turn_skill_for(
+            snapshot,
+            latest_user_message,
+            turn_reason="user_message",
+            turn_mode="answering",
+        )
+        == "baseline"
+    )
+
+
+def test_turn_skill_for_autonomous_direct_command_uses_stage_skill_by_default() -> None:
+    snapshot = {
+        "active_anchor": "baseline",
+        "continuation_anchor": "decision",
+        "baseline_gate": "pending",
+        "startup_contract": {},
+    }
+    latest_user_message = {
+        "role": "user",
+        "content": "请帮我检查一下当前 workspace。",
+        "source": "web-react",
+    }
+
+    assert (
+        DaemonApp._turn_skill_for(
+            snapshot,
+            latest_user_message,
+            turn_reason="user_message",
+            turn_mode="command_execution",
+        )
+        == "baseline"
+    )
+
+
+def test_turn_skill_for_blocking_reply_still_routes_to_decision() -> None:
+    snapshot = {
+        "active_anchor": "baseline",
+        "continuation_anchor": "baseline",
+        "baseline_gate": "pending",
+        "startup_contract": {},
+        "active_interactions": [
+            {
+                "interaction_id": "decision-001",
+                "artifact_id": "decision-001",
+                "status": "waiting",
+                "reply_mode": "blocking",
+                "kind": "decision_request",
+            }
+        ],
+    }
+    latest_user_message = {
+        "role": "user",
+        "content": "选 A。",
+        "source": "web-react",
+        "reply_to_interaction_id": "decision-001",
+    }
+
+    assert (
+        DaemonApp._turn_skill_for(
+            snapshot,
+            latest_user_message,
+            turn_reason="user_message",
+            turn_mode="answering",
+        )
+        == "decision"
+    )
+
+
+def test_user_turn_prompt_flow_e2e_keeps_warm_style_first_guidance(temp_home: Path) -> None:
+    ensure_home_layout(temp_home)
+    ConfigManager(temp_home).ensure_files()
+    app = DaemonApp(temp_home)
+    created = app.quest_service.create(
+        "warm style prompt flow quest",
+        startup_contract={
+            "workspace_mode": "copilot",
+            "decision_policy": "user_gated",
+            "launch_mode": "custom",
+            "custom_profile": "freeform",
+        },
+    )
+    snapshot = app.quest_service.snapshot(created["quest_id"])
+    latest_user_message = {
+        "role": "user",
+        "content": "现在情况怎么样？",
+        "source": "web-react",
+    }
+
+    turn_mode = app._turn_mode_for(snapshot, latest_user_message, turn_reason="user_message")
+    skill_id = app._turn_skill_for(
+        snapshot,
+        latest_user_message,
+        turn_reason="user_message",
+        turn_mode=turn_mode,
+    )
+    prompt = app.prompt_builder.build(
+        quest_id=created["quest_id"],
+        skill_id=skill_id,
+        user_message=str(latest_user_message["content"]),
+        model="gpt-5.4",
+        turn_reason="user_message",
+        turn_mode=turn_mode,
+    )
+
+    top_block = "\n".join(prompt.splitlines()[:50])
+    assert turn_mode == "answering"
+    assert skill_id == "baseline"
+    assert "都搞定啦！" in top_block
+    assert "路线切换" in top_block
+    assert "turn_self_routing_rule" in prompt
+    assert "研究搭子" in prompt
+
+
 def _wait_for_json(url: str, *, timeout: float = 10.0) -> dict | list:
     deadline = time.time() + timeout
     last_error: Exception | None = None
