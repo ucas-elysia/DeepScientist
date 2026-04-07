@@ -1,5 +1,5 @@
 <h1 align="center" style="font-size: 3.25rem; line-height: 1.02; margin-bottom: 0.4rem;">
-  <img src="assets/branding/logo.svg" alt="DeepScientist logo" width="64" />
+  <img src="assets/branding/logo.svg" alt="DeepScientist logo" width="45" />
   DeepScientist
 </h1>
 
@@ -11,7 +11,9 @@
   <a href="https://deepscientist.cc/">官网</a>
 </p>
 
-<p align="center" style="margin-top: 0.7rem;">
+<p align="center"><br/></p>
+
+<p align="center">
   <a href="https://github.com/ResearAI/DeepScientist"><img alt="GitHub stars" src="https://img.shields.io/github/stars/ResearAI/DeepScientist?style=for-the-badge&logo=github"></a>
   <a href="https://openreview.net/forum?id=cZFgsLq8Gs"><img alt="ICLR 2026" src="https://img.shields.io/badge/ICLR-2026-blue?style=for-the-badge&logo=openreview"></a>
   <a href="LICENSE"><img alt="License Apache-2.0" src="https://img.shields.io/badge/License-Apache%202.0-yellow.svg?style=for-the-badge"></a>
