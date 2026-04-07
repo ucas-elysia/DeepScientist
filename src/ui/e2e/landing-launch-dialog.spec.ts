@@ -67,7 +67,7 @@ async function openLaunchDialog(page: Page, locale: 'zh' | 'en') {
   }, locale)
 
   await installLandingStubs(page)
-  await page.goto('/ui/')
+  await page.goto('/')
   await expect(page.locator('[data-onboarding-id="landing-hero"]')).toBeVisible({ timeout: 30_000 })
 
   await page.locator('[data-onboarding-id="landing-start-research"]').click()

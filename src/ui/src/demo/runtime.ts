@@ -1,11 +1,13 @@
 import * as React from 'react'
 
 import type { TutorialDemoScenario } from '@/demo/types'
+import { useOnboardingStore } from '@/lib/stores/onboarding'
 
 const DEMO_RUNTIME_STORAGE_KEY = 'ds:demo-runtime:v1'
 const DEMO_STAGE_DURATION_MS = 2500
 const DEMO_FEED_REVEAL_MS = 850
 const DEMO_RUNTIME_EVENT = 'ds:demo-runtime-reset'
+const CANVAS_TUTORIAL_STAGE_INDEX = 18
 
 type DemoRuntimeRecord = {
   startedAt: number
@@ -124,7 +126,9 @@ export function getDemoTimelineState(projectId: string, scenario: TutorialDemoSc
     } as TutorialDemoScenario['stages'][number])
   const elapsedMs = Math.max(0, now - runtime.startedAt)
   const totalStages = Math.max(1, scenario.stages.length || 1)
-  const stageIndex = Math.min(totalStages - 1, Math.floor(elapsedMs / DEMO_STAGE_DURATION_MS))
+  const elapsedStageIndex = Math.min(totalStages - 1, Math.floor(elapsedMs / DEMO_STAGE_DURATION_MS))
+  const tutorialStageFloor = resolveTutorialStageFloor(projectId, totalStages)
+  const stageIndex = tutorialStageFloor == null ? elapsedStageIndex : Math.max(elapsedStageIndex, tutorialStageFloor)
   const stageElapsedMs = stageIndex >= totalStages - 1 ? elapsedMs : elapsedMs % DEMO_STAGE_DURATION_MS
   const currentStage = scenario.stages[stageIndex] ?? fallbackStage
   const revealedCurrentStageFeedCount = currentStage.feed.length
@@ -138,6 +142,16 @@ export function getDemoTimelineState(projectId: string, scenario: TutorialDemoSc
     currentStage,
     revealedCurrentStageFeedCount,
   }
+}
+
+function resolveTutorialStageFloor(projectId: string, totalStages: number): number | null {
+  if (typeof window === 'undefined') return null
+  if (!/^demo-/.test(String(projectId || '').trim())) return null
+  if (!/^\/projects\/demo-/.test(window.location.pathname)) return null
+  const state = useOnboardingStore.getState()
+  if (state.status !== 'running') return null
+  if (state.stepIndex < CANVAS_TUTORIAL_STAGE_INDEX) return null
+  return totalStages - 1
 }
 
 export function useDemoRuntimeTick(projectId: string) {

@@ -11,6 +11,7 @@ export function OverlayDialog({
   onClose,
   children,
   className,
+  dataOnboardingId,
 }: {
   open: boolean
   title: string
@@ -18,6 +19,7 @@ export function OverlayDialog({
   onClose: () => void
   children: ReactNode
   className?: string
+  dataOnboardingId?: string
 }) {
   if (!open) {
     return null
@@ -33,6 +35,9 @@ export function OverlayDialog({
           'morandi-surface view-panel relative flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[32px]',
           className
         )}
+        role="dialog"
+        aria-modal="true"
+        data-onboarding-id={dataOnboardingId}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-black/[0.06] px-5 py-4 dark:border-white/[0.08] sm:px-6">
