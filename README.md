@@ -380,7 +380,7 @@ If you are developing or maintaining DeepScientist, continue with:
 
 ## Citation
 
-If DeepScientist helps your research or engineering work, please cite:
+If DeepScientist helps your research or engineering work, please cite the paper below. DeepScientist is jointly developed by Yixuan Weng, Weixu Zhao, Shichen Li, Zhen Lin, and Minjun Zhu.
 
 ```bibtex
 @inproceedings{

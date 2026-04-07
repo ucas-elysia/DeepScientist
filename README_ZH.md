@@ -392,7 +392,7 @@ ds --auth true
 
 ## 引用
 
-如果 DeepScientist 对你的研究或工程工作有帮助，请引用：
+如果 DeepScientist 对你的研究或工程工作有帮助，请引用下方论文。DeepScientist 由 Yixuan Weng、Weixu Zhao、Shichen Li、Zhen Lin、Minjun Zhu 共同开发。
 
 ```bibtex
 @inproceedings{
